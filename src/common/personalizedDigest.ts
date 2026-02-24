@@ -130,16 +130,10 @@ type CIOSkadiAd = {
 
 export const getEmailAd = async ({
   user,
-  feature,
 }: {
   user: User;
-  feature: Pick<PersonalizedDigestFeatureConfig, 'templateId'>;
 }): Promise<CIOSkadiAd | null> => {
-  // TODO: Temporary hardcode 75 check
-  if (
-    isPlusMember(user.subscriptionFlags?.cycle) ||
-    feature.templateId != '75'
-  ) {
+  if (isPlusMember(user.subscriptionFlags?.cycle)) {
     return null;
   }
 
@@ -227,8 +221,12 @@ const getEmailVariation = async ({
     },
     message_data: {
       ...data,
-      title: `${userName}, your personal update from daily.dev is ready`,
-      preview: `Here are several posts you might like. Each post was carefully selected based on topics you love reading about. Let's get to it!`,
+      title:
+        feature.title ||
+        `${userName}, your personal update from daily.dev is ready`,
+      preview:
+        feature.preview ||
+        `Here are several posts you might like. Each post was carefully selected based on topics you love reading about. Let's get to it!`,
     },
   };
 };
@@ -383,7 +381,6 @@ export const getPersonalizedDigestEmailPayload = async ({
 
   const adProps = await getEmailAd({
     user,
-    feature,
   });
   if (adProps) {
     logger.info(

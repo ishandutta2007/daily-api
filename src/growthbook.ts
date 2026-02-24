@@ -110,6 +110,8 @@ const digestFeatureBaseConfig = {
   longTextLimit: 150,
   newUserSendType: UserPersonalizedDigestSendType.weekly,
   adIndex: 2,
+  title: '',
+  preview: '',
 };
 
 export type PersonalizedDigestFeatureConfig = typeof digestFeatureBaseConfig;
