@@ -138,6 +138,8 @@ beforeEach(async () => {
       data: mockedPostIds,
       rows: mockedPostIds.length,
     });
+
+  nock('http://localhost:8080').post('/private').reply(200, {}).persist();
 });
 
 const getDates = (
@@ -914,6 +916,8 @@ describe('personalizedDigestEmail worker', () => {
           rows: mockedPosts.length,
         });
 
+      nock('http://localhost:8080').post('/private').reply(200, {}).persist();
+
       const personalizedDigest = await con
         .getRepository(UserPersonalizedDigest)
         .findOneBy({
@@ -977,6 +981,8 @@ describe('personalizedDigestEmail worker', () => {
           data: mockedPosts.map((post) => ({ post_id: post.id })),
           rows: mockedPosts.length,
         });
+
+      nock('http://localhost:8080').post('/private').reply(200, {}).persist();
 
       const personalizedDigest = await con
         .getRepository(UserPersonalizedDigest)
