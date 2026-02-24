@@ -2984,7 +2984,14 @@ export const resolvers: IResolvers<unknown, BaseContext> = traceResolvers<
       const [post] = await Promise.all([
         ctx.con
           .createQueryBuilder()
-          .select(['post.id', 'post.title', 'post.type', 'post.sharedPostId'])
+          .select([
+            'post.id',
+            'post.title',
+            'post.type',
+            'post.sharedPostId',
+            'post.visible',
+            'post.deleted',
+          ])
           .from(Post, 'post')
           .where('post.id = :id', { id })
           .getOneOrFail(),
@@ -2992,6 +2999,10 @@ export const resolvers: IResolvers<unknown, BaseContext> = traceResolvers<
         ensureSourcePermissions(ctx, sourceId, SourcePermissions.Post),
         ensurePostRateLimit(ctx.con, ctx.userId),
       ]);
+
+      if (post.deleted) {
+        throw new ValidationError(SubmissionFailErrorMessage.POST_DELETED);
+      }
 
       const sharedPostId = determineSharedPostId(post);
 
@@ -3003,8 +3014,13 @@ export const resolvers: IResolvers<unknown, BaseContext> = traceResolvers<
           sourceId,
           postId: sharedPostId,
           commentary,
+          visible: post.visible,
         },
       });
+
+      if (!newPost.visible) {
+        return newPost as unknown as GQLPost;
+      }
 
       return getPostById(ctx, info, newPost.id);
     },

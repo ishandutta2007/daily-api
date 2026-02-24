@@ -914,6 +914,51 @@ describe('sharedPost field', () => {
       },
     });
   });
+
+  it('should resolve invisible shared article and use fallback title', async () => {
+    await con.getRepository(ArticlePost).save({
+      id: 'p-hidshr',
+      shortId: 'p-hidshr',
+      sourceId: 'a',
+      type: PostType.Article,
+      visible: false,
+      title: null,
+      summary: null,
+      url: 'https://example.com/failed-scrape',
+      canonicalUrl: 'https://example.com/failed-scrape',
+      image: 'https://daily.dev/image.jpg',
+      yggdrasilId: randomUUID(),
+    });
+    await con.getRepository(SharePost).save({
+      id: 'ps-hidden',
+      shortId: 'ps-hidden',
+      sourceId: 'a',
+      title: 'Shared post',
+      sharedPostId: 'p-hidshr',
+      visible: true,
+    });
+
+    const res = await client.query(`{
+      post(id: "ps-hidden") {
+        sharedPost {
+          id
+          title
+          url
+        }
+      }
+    }`);
+
+    expect(res.errors).toBeFalsy();
+    expect(res.data).toEqual({
+      post: {
+        sharedPost: {
+          id: 'p-hidshr',
+          title: 'Failed to scrape',
+          url: 'https://example.com/failed-scrape',
+        },
+      },
+    });
+  });
 });
 
 describe('type field', () => {
@@ -2492,6 +2537,19 @@ describe('mutation sharePost', () => {
     expect(post.authorId).toEqual('1');
     expect(post.sharedPostId).toEqual('p1');
     expect(post.title).toEqual('My comment');
+  });
+
+  it('should create invisible share and still return mutation result', async () => {
+    loggedUser = '1';
+    const res = await client.mutate(MUTATION, {
+      variables: { ...variables, id: 'p7' },
+    });
+    expect(res.errors).toBeFalsy();
+
+    const post = await con
+      .getRepository(SharePost)
+      .findOneByOrFail({ id: res.data.sharePost.id });
+    expect(post.visible).toEqual(false);
   });
 
   it('should share sharedPost to squad if title was provided', async () => {
@@ -4280,6 +4338,40 @@ describe('mutation submitExternalLink', () => {
       .findOneByOrFail({ sharedPostId: 'p_no_metadata' });
     expect(sharedPost.authorId).toEqual('1');
     expect(sharedPost.title).toEqual('My comment');
+    expect(sharedPost.visible).toEqual(false);
+  });
+
+  it('should force invisible share for broken existing post even when post is visible', async () => {
+    loggedUser = '1';
+
+    await con.getRepository(ArticlePost).save({
+      id: 'p-brk-vis',
+      shortId: 'p-brk-vis',
+      url: 'http://example.com/broken-visible',
+      canonicalUrl: 'http://example.com/broken-visible',
+      image: 'https://daily.dev/image.jpg',
+      sourceId: 'a',
+      title: null,
+      summary: null,
+      visible: true,
+      createdAt: new Date(),
+      type: PostType.Article,
+      private: false,
+      origin: PostOrigin.Squad,
+      yggdrasilId: randomUUID(),
+    });
+
+    const res = await client.mutate(MUTATION, {
+      variables: { ...variables, url: 'http://example.com/broken-visible' },
+    });
+
+    expect(res.errors).toBeFalsy();
+
+    const sharedPost = await con
+      .getRepository(SharePost)
+      .findOneByOrFail({ sharedPostId: 'p-brk-vis' });
+    expect(sharedPost.visible).toEqual(false);
+    expect(notifyContentRequested).toBeCalledTimes(1);
   });
 
   it('should share existing post by redirector link', async () => {
