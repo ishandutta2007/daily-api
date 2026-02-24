@@ -1,5 +1,5 @@
 import { ValidationError } from 'apollo-server-errors';
-import { DataSource, EntityManager, IsNull, QueryRunner } from 'typeorm';
+import { DataSource, EntityManager, QueryRunner } from 'typeorm';
 import {
   NotFoundError,
   TypeOrmError,
@@ -477,17 +477,29 @@ export const streamNotificationUsers = (
   return query.stream();
 };
 
+// +1 over the frontend display cap (20) so the client can show "20+" when the API returns 21
+export const UNREAD_NOTIFICATIONS_LIMIT = 21;
+
 export const getUnreadNotificationsCount = async (
   con: DataSource | QueryRunner,
   userId: string,
-) =>
-  await con.manager.getRepository(UserNotification).count({
-    where: {
-      userId,
-      public: true,
-      readAt: IsNull(),
-    },
-  });
+): Promise<number> => {
+  const result = await con.manager
+    .createQueryBuilder()
+    .select('COUNT(1)::int', 'count')
+    .from((qb) => {
+      return qb
+        .select('1')
+        .from(UserNotification, 'un')
+        .where('un."userId" = :userId', { userId })
+        .andWhere('un."public" = true')
+        .andWhere('un."readAt" IS NULL')
+        .limit(UNREAD_NOTIFICATIONS_LIMIT);
+    }, 't')
+    .getRawOne<{ count: number }>();
+
+  return result?.count ?? 0;
+};
 
 enum UserNotificationUniqueKey {
   PostAdded = 'post_added',

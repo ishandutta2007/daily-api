@@ -75,7 +75,6 @@ import {
   SEMATTRS_DAILY_APPS_USER_ID,
   SEMATTRS_DAILY_STAFF,
 } from '../telemetry';
-import { getUnreadNotificationsCount } from '../notifications/common';
 import { maxFeedsPerUser, type CoresRole, type TLocation } from '../types';
 import { queryReadReplica } from '../common/queryReadReplica';
 import { queryDataSource } from '../common/queryDataSource';
@@ -91,6 +90,7 @@ import {
   getProfileExperienceFlags as getSharedProfileExperienceFlags,
   type ProfileCompletion,
 } from '../common/profile/completion';
+import { getUnreadNotificationsCount } from '../notifications/common';
 import { unwrapArray } from '../common/array';
 
 export type BootSquadSource = Omit<GQLSource, 'currentMember'> & {
