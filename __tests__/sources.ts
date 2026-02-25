@@ -22,6 +22,7 @@ import {
   WelcomePost,
 } from '../src/entity';
 import { DisallowHandle } from '../src/entity/DisallowHandle';
+import { SourceStack } from '../src/entity/sources/SourceStack';
 import { SourceCategory } from '../src/entity/sources/SourceCategory';
 import { SourceTagView } from '../src/entity/SourceTagView';
 import { SourcePermissionErrorKeys } from '../src/errors';
@@ -55,6 +56,7 @@ import {
   UserTransactionStatus,
 } from '../src/entity/user/UserTransaction';
 import { Product, ProductType } from '../src/entity/Product';
+import { DatasetTool } from '../src/entity/dataset/DatasetTool';
 
 let con: DataSource;
 let state: GraphQLTestingState;
@@ -419,6 +421,7 @@ describe('query sources', () => {
     filterOpenSquads: boolean;
     categoryId: string;
     sortByMembersCount: boolean;
+    toolId: string;
   }
 
   const QUERY = ({
@@ -427,6 +430,7 @@ describe('query sources', () => {
     featured,
     categoryId,
     sortByMembersCount,
+    toolId,
   }: Partial<Props> = {}): string => `{
     sources(
       first: ${first},
@@ -434,6 +438,7 @@ describe('query sources', () => {
       ${isNullOrUndefined(featured) ? '' : `, featured: ${featured}`}
       ${isNullOrUndefined(categoryId) ? '' : `, categoryId: "${categoryId}"`}
       ${isNullOrUndefined(sortByMembersCount) ? '' : `, sortByMembersCount: ${sortByMembersCount}`}
+      ${isNullOrUndefined(toolId) ? '' : `, toolId: "${toolId}"`}
     ) {
       pageInfo {
         endCursor
@@ -714,6 +719,76 @@ describe('query sources', () => {
     expect(res.data.sources.edges.map(({ node }) => node.id)).toEqual(
       expect.arrayContaining(['c', 'squad', 'm', 'a', 'b']),
     );
+  });
+
+  it('should filter public squads by stack tool id', async () => {
+    const toolA = await con.getRepository(DatasetTool).save({
+      title: 'Tool A',
+      titleNormalized: 'toola',
+      faviconSource: 'none',
+    });
+    const toolB = await con.getRepository(DatasetTool).save({
+      title: 'Tool B',
+      titleNormalized: 'toolb',
+      faviconSource: 'none',
+    });
+
+    await con.getRepository(Source).update(
+      { id: In(['a', 'b', 'm']) },
+      {
+        type: SourceType.Squad,
+        private: false,
+        flags: updateFlagsStatement({ publicThreshold: true, totalMembers: 0 }),
+      },
+    );
+
+    await con.getRepository(SourceStack).save([
+      { sourceId: 'a', toolId: toolA.id, position: 0, createdById: '1' },
+      { sourceId: 'b', toolId: toolA.id, position: 0, createdById: '1' },
+      { sourceId: 'm', toolId: toolB.id, position: 0, createdById: '1' },
+    ]);
+
+    await con.getRepository(Source).update(
+      { id: 'a' },
+      {
+        flags: updateFlagsStatement({
+          totalMembers: 1,
+          publicThreshold: true,
+        }),
+      },
+    );
+    await con.getRepository(Source).update(
+      { id: 'b' },
+      {
+        flags: updateFlagsStatement({
+          totalMembers: 2,
+          publicThreshold: true,
+        }),
+      },
+    );
+    await con.getRepository(Source).update(
+      { id: 'm' },
+      {
+        flags: updateFlagsStatement({
+          totalMembers: 3,
+          publicThreshold: true,
+        }),
+      },
+    );
+
+    const res = await client.query(
+      QUERY({
+        first: 10,
+        filterOpenSquads: true,
+        sortByMembersCount: true,
+        toolId: toolA.id,
+      }),
+    );
+    expect(res.errors).toBeFalsy();
+    expect(res.data.sources.edges.map(({ node }) => node.id)).toEqual([
+      'b',
+      'a',
+    ]);
   });
 });
 
