@@ -187,6 +187,7 @@ export const subscribeMetricsHooks = (serviceName: string): void => {
       advice: {
         explicitBucketBoundaries: [
           10, 50, 75, 100, 150, 200, 400, 600, 800, 1000, 2000, 4000, 6000,
+          8000, 10000, 15000, 30000,
         ],
       },
     });
