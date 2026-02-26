@@ -87,6 +87,7 @@ export enum NotificationType {
   FeedbackResolved = 'feedback_resolved',
   FeedbackCancelled = 'feedback_cancelled',
   AchievementUnlocked = 'achievement_unlocked',
+  DigestReady = 'digest_ready',
 }
 
 export enum NotificationPreferenceType {
@@ -303,6 +304,10 @@ export const DEFAULT_NOTIFICATION_SETTINGS: UserNotificationFlags = {
     inApp: NotificationPreferenceStatus.Subscribed,
   },
   [NotificationType.AchievementUnlocked]: {
+    email: NotificationPreferenceStatus.Subscribed,
+    inApp: NotificationPreferenceStatus.Subscribed,
+  },
+  [NotificationType.DigestReady]: {
     email: NotificationPreferenceStatus.Subscribed,
     inApp: NotificationPreferenceStatus.Subscribed,
   },

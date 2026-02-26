@@ -487,6 +487,16 @@ export const typeDefs = /* GraphQL */ `
     Time the post was generated
     """
     generatedAt: DateTime
+
+    """
+    Post IDs included in a digest post
+    """
+    digestPostIds: [String]
+
+    """
+    Ad snapshot for a digest post
+    """
+    ad: SkadiAd
   }
 
   type UserPostFlagsPublic {
@@ -540,6 +550,17 @@ export const typeDefs = /* GraphQL */ `
     smartTitle: Boolean
     titleHtml: Boolean
     summary: Boolean
+  }
+
+  type SkadiAd {
+    type: String!
+    index: Int!
+    title: String
+    link: String
+    image: String
+    companyName: String
+    companyLogo: String
+    callToAction: String
   }
 
   """

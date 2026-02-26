@@ -248,6 +248,8 @@ export const notificationTitleMap: Record<
   feedback_cancelled: () => feedbackCancelledTitle,
   achievement_unlocked: (ctx: NotificationAchievementContext) =>
     `<span class="text-theme-color-cabbage">Achievement unlocked!</span> ${ctx.achievementName}`,
+  digest_ready: () =>
+    `<strong>Your daily digest is ready!</strong> Here are the top posts curated for you.`,
 };
 
 export const generateNotificationMap: Record<
@@ -742,5 +744,16 @@ export const generateNotificationMap: Record<
         `${process.env.COMMENTS_PREFIX}/${ctx.userIds[0]}/achievements`,
       )
       .uniqueKey(ctx.userIds[0]);
+  },
+  digest_ready: (
+    builder: NotificationBuilder,
+    ctx: NotificationPostContext,
+  ) => {
+    return builder
+      .icon(NotificationIcon.Bell)
+      .avatarDigest()
+      .referencePost(ctx.post)
+      .targetPost(ctx.post)
+      .uniqueKey(ctx.post.id);
   },
 };
