@@ -52,7 +52,7 @@ export const majorHeadlineAdded: TypedNotificationWorker<'api.v1.post-highlighte
         .select('u.id', 'id')
         .from(User, 'u')
         .where(
-          `COALESCE(u."notificationFlags"->'major_headline_added'->>'inApp', 'subscribed') = 'subscribed'`,
+          `COALESCE(u."notificationFlags"->'major_headline_added'->>'inApp', 'muted') = 'subscribed'`,
         )
         .stream();
 

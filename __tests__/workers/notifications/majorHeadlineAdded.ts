@@ -43,6 +43,20 @@ const invoke = (overrides: Partial<typeof baseMessage> = {}) =>
   );
 
 describe('majorHeadlineAdded notification worker', () => {
+  beforeEach(async () => {
+    await con.getRepository(User).update(
+      { id: '1' },
+      {
+        notificationFlags: {
+          [NotificationType.MajorHeadlineAdded]: {
+            inApp: NotificationPreferenceStatus.Subscribed,
+            email: NotificationPreferenceStatus.Subscribed,
+          },
+        },
+      },
+    );
+  });
+
   it('should be registered', () => {
     const registeredWorker = workers.find(
       (item) => item.subscription === majorHeadlineAdded.subscription,
@@ -140,9 +154,7 @@ describe('majorHeadlineAdded notification worker', () => {
 
     const result = await invoke();
 
-    expect(result?.length).toEqual(1);
-    const ctx = result?.[0]?.ctx as { userIds: string[] };
-    expect(ctx.userIds).not.toContain('1');
+    expect(result?.length).toBeFalsy();
   });
 
   it('should skip when no users are subscribed', async () => {
