@@ -2,7 +2,7 @@ import { IResolvers } from '@graphql-tools/utils';
 import { ValidationError } from 'apollo-server-errors';
 import type { GraphQLResolveInfo } from 'graphql';
 import type { Connection, ConnectionArguments } from 'graphql-relay';
-import { In } from 'typeorm';
+import { In, LessThanOrEqual } from 'typeorm';
 import type z from 'zod';
 import { AuthContext, BaseContext, Context } from '../Context';
 import {
@@ -20,6 +20,9 @@ import {
   validateContributionEvidence,
 } from '../common/contribution';
 import { fulfillContributionReward } from '../common/contribution/rewards';
+import { notifyContributionRewardClaimedSlack } from '../common/slack';
+import { logger } from '../logger';
+import { User } from '../entity/user/User';
 import {
   claimContributionRewardArgsSchema,
   contributionActionLinksArgsSchema,
@@ -33,6 +36,8 @@ import { ContributionAction } from '../entity/contribution/ContributionAction';
 import { ContributionActionCategory } from '../entity/contribution/ContributionActionCategory';
 import { ContributionActionLink } from '../entity/contribution/ContributionActionLink';
 import { ContributionCause } from '../entity/contribution/ContributionCause';
+import { ContributionFoundingContributor } from '../entity/contribution/ContributionFoundingContributor';
+import { CONTRIBUTION_FOUNDING_LIMIT } from '../common/contribution/founding';
 import { ContributionMilestone } from '../entity/contribution/ContributionMilestone';
 import {
   ContributionPayment,
@@ -111,6 +116,13 @@ type GQLContributionStatus = {
   userPoints: number | null;
 };
 
+type GQLContributionFoundingAward = {
+  totalSpots: number;
+  claimedCount: number;
+  isFoundingMember: boolean;
+  memberNumber: number | null;
+};
+
 type GQLUserContributionReward = Pick<
   UserContributionReward,
   'status' | 'claimedAt' | 'fulfilledAt'
@@ -159,6 +171,12 @@ export const typeDefs = /* GraphQL */ `
   enum ContributionRewardType {
     cores
     plus_days
+    store_discount
+    suggest_causes
+    council
+    patchy_picture
+    joke
+    trivia
     call
     privilege
     custom
@@ -193,6 +211,26 @@ export const typeDefs = /* GraphQL */ `
     The visitor's own approved points. Null for anonymous visitors.
     """
     userPoints: Int
+  }
+
+  """
+  The founding-contributor award: a one-time, capped gift for the first N
+  contributors, granted automatically on a contributor's first approved action.
+  Campaign-wide fields render for everyone; the visitor's own membership is null
+  until they sign in (and stays false/null until they become a founder).
+  """
+  type ContributionFoundingAward {
+    totalSpots: Int!
+    claimedCount: Int!
+    """
+    Whether the visitor is a founding contributor. False for anonymous visitors.
+    """
+    isFoundingMember: Boolean!
+    """
+    The visitor's founding number (1-based, by grant order). Null unless they are
+    a founding contributor.
+    """
+    memberNumber: Int
   }
 
   type ContributionActionMetadata {
@@ -405,6 +443,7 @@ export const typeDefs = /* GraphQL */ `
 
   extend type Query {
     contributionStatus: ContributionStatus!
+    contributionFoundingAward: ContributionFoundingAward!
     contributionActionCategories(
       first: Int
       after: String
@@ -561,6 +600,36 @@ export const resolvers: IResolvers<unknown, BaseContext> = {
         lifetimeAmountCents,
         contributorsCount,
         userPoints,
+      };
+    },
+    contributionFoundingAward: async (
+      _,
+      __,
+      ctx: Context,
+    ): Promise<GQLContributionFoundingAward> => {
+      // Public query: the spots-taken counter renders for everyone; the visitor's
+      // own founding membership stays false/null until they sign in and qualify.
+      const repo = ctx.con.getRepository(ContributionFoundingContributor);
+      const { userId } = ctx;
+      const [claimedCount, membership] = await Promise.all([
+        repo.count(),
+        userId
+          ? repo.findOne({ select: ['userId', 'createdAt'], where: { userId } })
+          : null,
+      ]);
+
+      // 1-based grant order (how many founders joined at or before this one).
+      const memberNumber = membership
+        ? await repo.countBy({
+            createdAt: LessThanOrEqual(membership.createdAt),
+          })
+        : null;
+
+      return {
+        totalSpots: CONTRIBUTION_FOUNDING_LIMIT,
+        claimedCount,
+        isFoundingMember: !!membership,
+        memberNumber,
       };
     },
     contributionActionCategories: async (
@@ -1016,62 +1085,92 @@ export const resolvers: IResolvers<unknown, BaseContext> = {
         args,
       );
 
-      return ctx.con.transaction(async (con) => {
-        const tier = await con.getRepository(ContributionRewardTier).findOne({
-          where: {
-            id: tierId,
-            active: true,
-          },
-        });
+      const { tier, reward, newlyFulfilled } = await ctx.con.transaction(
+        async (con) => {
+          const rewardTier = await con
+            .getRepository(ContributionRewardTier)
+            .findOne({
+              where: {
+                id: tierId,
+                active: true,
+              },
+            });
 
-        if (!tier) {
-          throw new NotFoundError('Contribution reward tier not found');
-        }
+          if (!rewardTier) {
+            throw new NotFoundError('Contribution reward tier not found');
+          }
 
-        const userPoints = await getApprovedPointsSum({
-          con,
-          userId: ctx.userId,
-        });
-
-        if (userPoints < tier.thresholdPoints) {
-          throw new ValidationError('Reward threshold has not been reached');
-        }
-
-        const existing = await con
-          .getRepository(UserContributionReward)
-          .findOne({
-            where: {
-              userId: ctx.userId,
-              tierId: tier.id,
-            },
+          const userPoints = await getApprovedPointsSum({
+            con,
+            userId: ctx.userId,
           });
 
-        if (existing) {
-          const reward = await fulfillContributionReward({
+          if (userPoints < rewardTier.thresholdPoints) {
+            throw new ValidationError('Reward threshold has not been reached');
+          }
+
+          const existing = await con
+            .getRepository(UserContributionReward)
+            .findOne({
+              where: {
+                userId: ctx.userId,
+                tierId: rewardTier.id,
+              },
+            });
+          const wasFulfilled =
+            existing?.status === UserContributionRewardStatus.Fulfilled;
+
+          const claimedReward = await fulfillContributionReward({
             con,
             ctx,
-            tier,
-            reward: existing,
+            tier: rewardTier,
+            reward:
+              existing ??
+              (await con.getRepository(UserContributionReward).save({
+                userId: ctx.userId,
+                tierId: rewardTier.id,
+                status: UserContributionRewardStatus.Claimed,
+                claimedAt: new Date(),
+                fulfilledAt: null,
+              })),
           });
 
-          return toGQLReward({ reward, tier });
+          return {
+            tier: rewardTier,
+            reward: claimedReward,
+            newlyFulfilled:
+              !wasFulfilled &&
+              claimedReward.status === UserContributionRewardStatus.Fulfilled,
+          };
+        },
+      );
+
+      // Coupon / council rewards are fulfilled by a human — ping the team once,
+      // after the claim has committed, so a failed claim never notifies and a
+      // Slack outage never fails the claim.
+      const slackNotifyTypes = [
+        ContributionRewardType.StoreDiscount,
+        ContributionRewardType.Council,
+      ];
+      if (newlyFulfilled && slackNotifyTypes.includes(tier.rewardType)) {
+        try {
+          const user = await ctx.con.getRepository(User).findOne({
+            select: ['id', 'username', 'name', 'email'],
+            where: { id: ctx.userId },
+          });
+
+          if (user) {
+            await notifyContributionRewardClaimedSlack({ user, tier });
+          }
+        } catch (err) {
+          logger.error(
+            { err, tierId: tier.id, userId: ctx.userId },
+            'failed to notify Slack of contribution reward claim',
+          );
         }
+      }
 
-        const reward = await fulfillContributionReward({
-          con,
-          ctx,
-          tier,
-          reward: await con.getRepository(UserContributionReward).save({
-            userId: ctx.userId,
-            tierId: tier.id,
-            status: UserContributionRewardStatus.Claimed,
-            claimedAt: new Date(),
-            fulfilledAt: null,
-          }),
-        });
-
-        return toGQLReward({ reward, tier });
-      });
+      return toGQLReward({ reward, tier });
     },
   },
   Subscription: {
