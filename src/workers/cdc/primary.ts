@@ -195,7 +195,6 @@ import {
   AchievementEventType,
 } from '../../common/achievement';
 import { checkQuestProgress } from '../../common/quest';
-import { remoteConfig } from '../../remoteConfig';
 
 const convertUserToChangeObject = (user: User): ChangeObject<User> => ({
   ...user,
@@ -1740,13 +1739,7 @@ const onMarketingCtaChange = async (
   con: DataSource,
   data: ChangeMessage<MarketingCta>,
 ) => {
-  if (
-    data.payload.op !== 'u' ||
-    (data.payload.after?.campaignId &&
-      remoteConfig.vars?.excludedMarketingCta?.includes(
-        data.payload.after?.campaignId,
-      ))
-  ) {
+  if (data.payload.op !== 'u') {
     return;
   }
 
