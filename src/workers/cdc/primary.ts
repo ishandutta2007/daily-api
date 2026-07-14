@@ -195,6 +195,7 @@ import {
   AchievementEventType,
 } from '../../common/achievement';
 import { checkQuestProgress } from '../../common/quest';
+import { TypeOrmError, type TypeORMQueryFailedError } from '../../errors';
 
 const convertUserToChangeObject = (user: User): ChangeObject<User> => ({
   ...user,
@@ -1557,10 +1558,18 @@ const onFeedChange = async (
   data: ChangeMessage<Feed>,
 ) => {
   if (data.payload.op === 'c') {
-    await updateAlerts(con, data.payload.after!.userId, { myFeed: 'created' });
+    const feed = data.payload.after!;
+    try {
+      await updateAlerts(con, feed.userId, { myFeed: 'created' });
+    } catch (originalError) {
+      const err = originalError as TypeORMQueryFailedError;
+      if (err.code === TypeOrmError.FOREIGN_KEY) {
+        return;
+      }
+      throw err;
+    }
 
     // feed id differs from userId means custom feed
-    const feed = data.payload.after!;
     // flags arrive as a JSON string from CDC
     const feedFlags = JSON.parse(
       (feed.flags as unknown as string) || '{}',

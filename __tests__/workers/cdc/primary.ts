@@ -2146,6 +2146,23 @@ describe('feed', () => {
     const alerts = await repo.findOneBy({ userId: base.userId });
     expect(alerts.myFeed).toEqual('created');
   });
+
+  it('should ignore feed creation when the user no longer exists', async () => {
+    const userId = 'deleted-feed-user';
+
+    await expectSuccessfulBackground(
+      worker,
+      mockChangeMessage<ObjectType>({
+        after: { ...base, id: userId, userId },
+        before: null,
+        op: 'c',
+        table: 'feed',
+      }),
+    );
+
+    const alerts = await con.getRepository(Alerts).findOneBy({ userId });
+    expect(alerts).toBeNull();
+  });
 });
 
 describe('settings', () => {
