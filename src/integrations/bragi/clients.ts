@@ -10,7 +10,6 @@ import {
   ClassifyRejectionFeedbackResponse,
   ClassifyUserFeedbackResponse,
   EvaluateChannelHighlightsResponse,
-  FilterSearchResponse,
   FeedbackCategory,
   FeedbackClassification,
   FeedbackPlatform,
@@ -152,11 +151,6 @@ export const getBragiClient = (
           new AudienceFitResponse({
             id: 'mock-id',
             audienceFit: 0.9,
-          }),
-        filterSearchResults: async () =>
-          new FilterSearchResponse({
-            id: 'mock-id',
-            indexes: [0],
           }),
         classifyRejectionFeedback: async () =>
           new ClassifyRejectionFeedbackResponse({

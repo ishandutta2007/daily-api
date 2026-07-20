@@ -1,11 +1,6 @@
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
-  AuthStorage,
   createAgentSession,
   DefaultResourceLoader,
-  ModelRegistry,
   SessionManager,
   type ExtensionAPI,
 } from '@earendil-works/pi-coding-agent';
@@ -41,10 +36,10 @@ import {
   replaceFeedTags,
   DEFAULT_INTEREST_MAX_TAGS,
 } from './feedTags';
+import { createInterestAgentModel } from './agentModel';
 
 const DEFAULT_SEARCH_LIMIT = 10;
 const SEARCH_VERSION = 3;
-const MODEL_PROVIDER = 'anthropic';
 
 export type InterestAgentRunResult = {
   findingsAdded: number;
@@ -103,32 +98,12 @@ export const runInterestAgent = async ({
   logger: FastifyBaseLogger;
   interest: UserInterest;
 }): Promise<InterestAgentRunResult> => {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    throw new Error(
-      'ANTHROPIC_API_KEY is not configured for the interest agent',
-    );
-  }
   if (!interest.sourceId) {
     throw new Error('interest is missing a provisioned source');
   }
 
-  const modelId = process.env.INTEREST_AGENT_MODEL || 'claude-opus-4-8';
-  const agentDir = await mkdtemp(join(tmpdir(), 'interest-agent-'));
-
-  const authStorage = AuthStorage.create(join(agentDir, 'auth.json'));
-  authStorage.setRuntimeApiKey(MODEL_PROVIDER, apiKey);
-  const modelRegistry = ModelRegistry.inMemory(authStorage);
-  const model =
-    modelRegistry.find(MODEL_PROVIDER, modelId) ??
-    (await modelRegistry.getAvailable()).find(
-      (candidate) => candidate.provider === MODEL_PROVIDER,
-    );
-  if (!model) {
-    throw new Error(
-      `interest agent model not found: ${MODEL_PROVIDER}/${modelId}`,
-    );
-  }
+  const { agentDir, authStorage, modelRegistry, model } =
+    await createInterestAgentModel();
 
   const log = logger.child({ provider: 'interest agent' });
 

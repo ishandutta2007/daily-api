@@ -48,7 +48,6 @@ import {
   ScreeningQuestionsResponse,
   BrokkrService,
   ExtractMarkdownResponse,
-  FilterSearchResponse,
   FindCompanyNewsResponse,
   FindContactActivityResponse,
   ExtractedProfileTag,
@@ -813,14 +812,6 @@ export const createMockBragiPipelinesTransport = () =>
             new ExtractedProfileTag({ name: 'fullstack', confidence: 0.85 }),
           ],
         }),
-    });
-  });
-
-export const createMockBragiPipelinesIrrelevantTransport = () =>
-  createRouterTransport(({ service }) => {
-    service(Pipelines, {
-      filterSearchResults: () =>
-        new FilterSearchResponse({ id: 'mock-id', indexes: [] }),
     });
   });
 

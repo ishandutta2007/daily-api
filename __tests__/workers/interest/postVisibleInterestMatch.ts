@@ -1,15 +1,7 @@
 import { DataSource } from 'typeorm';
-import { createClient } from '@connectrpc/connect';
-import { Pipelines } from '@dailydotdev/schema';
 import createOrGetConnection from '../../../src/db';
-import {
-  createGarmrMock,
-  createMockBragiPipelinesIrrelevantTransport,
-  expectSuccessfulTypedBackground,
-  saveFixtures,
-} from '../../helpers';
-import * as bragiClients from '../../../src/integrations/bragi/clients';
-import type { ServiceClient } from '../../../src/types';
+import { expectSuccessfulTypedBackground, saveFixtures } from '../../helpers';
+import { evaluateInterestRelevance } from '../../../src/common/interest/evaluateInterestRelevance';
 import { postVisibleInterestMatchWorker as worker } from '../../../src/workers/interest/postVisibleInterestMatch';
 import { typedWorkers } from '../../../src/workers';
 import { ArticlePost, Source, User } from '../../../src/entity';
@@ -36,6 +28,10 @@ jest.mock('../../../src/common/interest/runInterestAgent', () => ({
   runInterestAgent: jest.fn(),
 }));
 
+jest.mock('../../../src/common/interest/evaluateInterestRelevance', () => ({
+  evaluateInterestRelevance: jest.fn(),
+}));
+
 jest.mock('../../../src/common/typedPubsub', () => ({
   ...(jest.requireActual('../../../src/common/typedPubsub') as Record<
     string,
@@ -52,6 +48,10 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   jest.resetAllMocks();
+  (evaluateInterestRelevance as jest.Mock).mockResolvedValue({
+    relevant: true,
+    score: 0.9,
+  });
   await saveFixtures(con, User, usersFixture);
   await saveFixtures(con, Source, sourcesFixture);
   await saveFixtures(con, ArticlePost, postsFixture);
@@ -120,18 +120,32 @@ describe('postVisibleInterestMatch worker', () => {
     expect(triggerTypedEvent).not.toHaveBeenCalled();
   });
 
-  it('skips when the post is not relevant to the interest query', async () => {
+  it('skips when the agent judges the post not relevant', async () => {
     await con.getRepository(FeedTag).save({ feedId: 'feed-1', tag: 'zig' });
-    jest.restoreAllMocks();
-    jest.spyOn(bragiClients, 'getBragiClient').mockImplementation(
-      (): ServiceClient<typeof Pipelines> => ({
-        instance: createClient(
-          Pipelines,
-          createMockBragiPipelinesIrrelevantTransport(),
-        ),
-        garmr: createGarmrMock(),
-      }),
-    );
+    (evaluateInterestRelevance as jest.Mock).mockResolvedValue({
+      relevant: false,
+      score: 0,
+    });
+
+    await expectSuccessfulTypedBackground<'api.v1.post-visible'>(worker, {
+      post: await getPost(),
+    });
+
+    const finding = await con
+      .getRepository(InterestFinding)
+      .findOneBy({ interestId: 'uir-1', postId: 'p1' });
+    expect(finding).toBeNull();
+  });
+
+  it('skips when the relevance score is below the FOMO threshold', async () => {
+    await con.getRepository(FeedTag).save({ feedId: 'feed-1', tag: 'zig' });
+    await con
+      .getRepository(UserInterest)
+      .update({ id: 'uir-1' }, { fomoThreshold: 0.95 });
+    (evaluateInterestRelevance as jest.Mock).mockResolvedValue({
+      relevant: true,
+      score: 0.6,
+    });
 
     await expectSuccessfulTypedBackground<'api.v1.post-visible'>(worker, {
       post: await getPost(),
