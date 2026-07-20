@@ -19,6 +19,7 @@ import type { DataSource } from 'typeorm';
 import type { FastifyBaseLogger } from 'fastify';
 import { In } from 'typeorm';
 import { mimirClient } from '../../integrations/mimir/clients';
+import { mimirFilterBuilder } from '../../integrations/mimir/filters';
 import { getBragiClient } from '../../integrations/bragi/clients';
 import { Post } from '../../entity/posts/Post';
 import { PostKeyword } from '../../entity/PostKeyword';
@@ -42,6 +43,7 @@ import {
 } from './feedTags';
 
 const DEFAULT_SEARCH_LIMIT = 10;
+const SEARCH_VERSION = 2;
 const MODEL_PROVIDER = 'anthropic';
 
 export type InterestAgentRunResult = {
@@ -133,6 +135,8 @@ export const runInterestAgent = async ({
     );
   }
 
+  const log = logger.child({ provider: 'interest agent' });
+
   const state: InterestAgentRunResult = {
     findingsAdded: 0,
     summaryPostId: null,
@@ -157,7 +161,10 @@ export const runInterestAgent = async ({
         const response: SearchResponse = await mimirClient.search(
           new SearchRequest({
             query: params.query,
+            version: SEARCH_VERSION,
+            offset: 0,
             limit: params.limit ?? DEFAULT_SEARCH_LIMIT,
+            filters: mimirFilterBuilder({}),
           }),
         );
         const postIds = response.result
@@ -178,6 +185,16 @@ export const runInterestAgent = async ({
           postId: post.id,
           title: post.title,
         }));
+        log.info(
+          {
+            interestId: interest.id,
+            query: params.query,
+            mimirCount: response.result.length,
+            candidateCount: candidates.length,
+            candidates,
+          },
+          'interest agent search_daily_dev',
+        );
         return {
           content: [{ type: 'text', text: JSON.stringify({ candidates }) }],
           details: {},
@@ -228,6 +245,15 @@ export const runInterestAgent = async ({
           ),
         );
         scores.set(post.id, response.audienceFit);
+        log.info(
+          {
+            interestId: interest.id,
+            postId: post.id,
+            title: post.title,
+            score: response.audienceFit,
+          },
+          'interest agent score_finding',
+        );
         return {
           content: [
             {
@@ -295,6 +321,15 @@ export const runInterestAgent = async ({
           .execute();
         addedPostIds.add(params.postId);
         state.findingsAdded += 1;
+        log.info(
+          {
+            interestId: interest.id,
+            postId: params.postId,
+            score,
+            rationale: params.rationale,
+          },
+          'interest agent add_to_feed',
+        );
         return {
           content: [
             {
@@ -450,11 +485,37 @@ export const runInterestAgent = async ({
     tools: activeTools,
   });
 
+  const unsubscribe = session.subscribe((event) => {
+    if (event.type === 'message_end') {
+      const message = event.message as {
+        role?: string;
+        content?: { type?: string; text?: string }[];
+      };
+      if (message.role !== 'assistant' || !Array.isArray(message.content)) {
+        return;
+      }
+      const text = message.content
+        .map((part) => (typeof part?.text === 'string' ? part.text : ''))
+        .filter(Boolean)
+        .join('\n')
+        .trim();
+      if (text) {
+        log.info({ interestId: interest.id, text }, 'interest agent message');
+      }
+    } else if (event.type === 'tool_execution_end' && event.isError) {
+      log.warn(
+        { interestId: interest.id, tool: event.toolName },
+        'interest agent tool error',
+      );
+    }
+  });
+
   try {
     await session.prompt(
       `Hunt daily.dev for content matching the interest "${interest.query}" and deliver it now.`,
     );
   } finally {
+    unsubscribe();
     session.dispose();
   }
 
@@ -476,7 +537,7 @@ export const runInterestAgent = async ({
     state.summaryPostId ? ', wrote a summary post' : ''
   }${state.notifyRequested ? ', notified the user' : ''}.`;
 
-  logger.info(
+  log.info(
     { interestId: interest.id, ...state },
     'interest agent run complete',
   );
