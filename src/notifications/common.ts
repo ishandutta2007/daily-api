@@ -69,6 +69,7 @@ export enum NotificationType {
   CampaignSquadCompleted = 'campaign_squad_completed',
   BriefingReady = 'briefing_ready',
   InterestContentAvailable = 'interest_content_available',
+  InterestContentBatch = 'interest_content_batch',
   UserFollow = 'user_follow',
   Marketing = 'marketing',
   NewUserWelcome = 'new_user_welcome',
@@ -249,6 +250,10 @@ export const DEFAULT_NOTIFICATION_SETTINGS: UserNotificationFlags = {
     inApp: NotificationPreferenceStatus.Subscribed,
   },
   [NotificationType.InterestContentAvailable]: {
+    email: NotificationPreferenceStatus.Subscribed,
+    inApp: NotificationPreferenceStatus.Subscribed,
+  },
+  [NotificationType.InterestContentBatch]: {
     email: NotificationPreferenceStatus.Subscribed,
     inApp: NotificationPreferenceStatus.Subscribed,
   },
@@ -552,6 +557,7 @@ enum UserNotificationUniqueKey {
   PostAdded = 'post_added',
   DigestReady = 'digest_ready',
   ScheduledPostPublished = 'scheduled_post_published',
+  InterestContentBatch = 'interest_content_batch',
 }
 
 const notificationTypeToUniqueKey: Partial<
@@ -563,6 +569,8 @@ const notificationTypeToUniqueKey: Partial<
   [NotificationType.DigestReady]: UserNotificationUniqueKey.DigestReady,
   [NotificationType.ScheduledPostPublished]:
     UserNotificationUniqueKey.ScheduledPostPublished,
+  [NotificationType.InterestContentBatch]:
+    UserNotificationUniqueKey.InterestContentBatch,
 };
 
 const fixedUniqueKeyTypes = new Set<NotificationType>([

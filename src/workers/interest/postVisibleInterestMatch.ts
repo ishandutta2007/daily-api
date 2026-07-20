@@ -1,5 +1,5 @@
 import { In } from 'typeorm';
-import { AudienceFitRequest } from '@dailydotdev/schema';
+import { AudienceFitRequest, FilterSearchRequest } from '@dailydotdev/schema';
 import type { TypedWorker } from '../worker';
 import { UserInterest, UserInterestStatus } from '../../entity/UserInterest';
 import {
@@ -11,7 +11,6 @@ import { KeywordStatus } from '../../entity/Keyword';
 import { FeedTag } from '../../entity/FeedTag';
 import { PostType } from '../../entity/posts/Post';
 import { getBragiClient } from '../../integrations/bragi/clients';
-import { triggerTypedEvent } from '../../common/typedPubsub';
 import { generateShortId } from '../../ids';
 import { remoteConfig } from '../../remoteConfig';
 
@@ -51,7 +50,7 @@ export const postVisibleInterestMatchWorker: TypedWorker<'api.v1.post-visible'> 
       const matches = await con
         .getRepository(UserInterest)
         .createQueryBuilder('ui')
-        .select(['ui.id', 'ui.userId', 'ui.fomoThreshold', 'ui.outputModes'])
+        .select(['ui.id', 'ui.userId', 'ui.query', 'ui.outputModes'])
         .innerJoin(
           FeedTag,
           'ft',
@@ -86,9 +85,25 @@ export const postVisibleInterestMatchWorker: TypedWorker<'api.v1.post-visible'> 
       const alreadyFound = new Set(existing.map((row) => row.interestId));
 
       const bragiClient = getBragiClient();
+      const resultsJson = JSON.stringify([
+        { title: post.title ?? '', content: post.summary ?? '' },
+      ]);
 
       for (const interest of limited) {
         if (alreadyFound.has(interest.id)) {
+          continue;
+        }
+
+        const relevance = await bragiClient.garmr.execute(() =>
+          bragiClient.instance.filterSearchResults(
+            new FilterSearchRequest({
+              prompt: interest.query,
+              results: resultsJson,
+            }),
+          ),
+        );
+
+        if (!relevance.indexes.includes(0)) {
           continue;
         }
 
@@ -102,10 +117,6 @@ export const postVisibleInterestMatchWorker: TypedWorker<'api.v1.post-visible'> 
           ),
         );
 
-        if (response.audienceFit < (interest.fomoThreshold ?? 0.5)) {
-          continue;
-        }
-
         if (interest.outputModes?.feed ?? true) {
           await con
             .getRepository(InterestFinding)
@@ -117,18 +128,10 @@ export const postVisibleInterestMatchWorker: TypedWorker<'api.v1.post-visible'> 
               postId: post.id,
               score: response.audienceFit,
               rationale: 'Matched a newly published post by tag overlap',
-              status: InterestFindingStatus.Surfaced,
+              status: InterestFindingStatus.New,
             })
             .orIgnore()
             .execute();
-        }
-
-        if (interest.outputModes?.notification ?? true) {
-          await triggerTypedEvent(logger, 'api.v1.interest-content-available', {
-            interestId: interest.id,
-            postId: post.id,
-            userId: interest.userId,
-          });
         }
       }
     },

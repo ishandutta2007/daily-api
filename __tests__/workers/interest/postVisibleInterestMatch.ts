@@ -1,6 +1,15 @@
 import { DataSource } from 'typeorm';
+import { createClient } from '@connectrpc/connect';
+import { Pipelines } from '@dailydotdev/schema';
 import createOrGetConnection from '../../../src/db';
-import { expectSuccessfulTypedBackground, saveFixtures } from '../../helpers';
+import {
+  createGarmrMock,
+  createMockBragiPipelinesIrrelevantTransport,
+  expectSuccessfulTypedBackground,
+  saveFixtures,
+} from '../../helpers';
+import * as bragiClients from '../../../src/integrations/bragi/clients';
+import type { ServiceClient } from '../../../src/types';
 import { postVisibleInterestMatchWorker as worker } from '../../../src/workers/interest/postVisibleInterestMatch';
 import { typedWorkers } from '../../../src/workers';
 import { ArticlePost, Source, User } from '../../../src/entity';
@@ -12,7 +21,10 @@ import {
   UserInterest,
   UserInterestStatus,
 } from '../../../src/entity/UserInterest';
-import { InterestFinding } from '../../../src/entity/InterestFinding';
+import {
+  InterestFinding,
+  InterestFindingStatus,
+} from '../../../src/entity/InterestFinding';
 import { usersFixture } from '../../fixture/user';
 import { postsFixture } from '../../fixture/post';
 import { sourcesFixture } from '../../fixture';
@@ -79,7 +91,7 @@ describe('postVisibleInterestMatch worker', () => {
     expect(registered).toBeTruthy();
   });
 
-  it('adds a finding and notifies when a new post overlaps interest tags', async () => {
+  it('adds a finding as New without notifying when a new post overlaps interest tags', async () => {
     await con.getRepository(FeedTag).save({ feedId: 'feed-1', tag: 'zig' });
 
     await expectSuccessfulTypedBackground<'api.v1.post-visible'>(worker, {
@@ -89,16 +101,9 @@ describe('postVisibleInterestMatch worker', () => {
     const finding = await con
       .getRepository(InterestFinding)
       .findOneBy({ interestId: 'uir-1', postId: 'p1' });
-    expect(finding).toBeTruthy();
+    expect(finding?.status).toEqual(InterestFindingStatus.New);
 
-    const call = (triggerTypedEvent as jest.Mock).mock.calls.find(
-      (c) => c[1] === 'api.v1.interest-content-available',
-    );
-    expect(call?.[2]).toEqual({
-      interestId: 'uir-1',
-      postId: 'p1',
-      userId: '1',
-    });
+    expect(triggerTypedEvent).not.toHaveBeenCalled();
   });
 
   it('does nothing when tags do not overlap', async () => {
@@ -115,11 +120,18 @@ describe('postVisibleInterestMatch worker', () => {
     expect(triggerTypedEvent).not.toHaveBeenCalled();
   });
 
-  it('skips when the audienceFit score is below the FOMO threshold', async () => {
+  it('skips when the post is not relevant to the interest query', async () => {
     await con.getRepository(FeedTag).save({ feedId: 'feed-1', tag: 'zig' });
-    await con
-      .getRepository(UserInterest)
-      .update({ id: 'uir-1' }, { fomoThreshold: 0.95 });
+    jest.restoreAllMocks();
+    jest.spyOn(bragiClients, 'getBragiClient').mockImplementation(
+      (): ServiceClient<typeof Pipelines> => ({
+        instance: createClient(
+          Pipelines,
+          createMockBragiPipelinesIrrelevantTransport(),
+        ),
+        garmr: createGarmrMock(),
+      }),
+    );
 
     await expectSuccessfulTypedBackground<'api.v1.post-visible'>(worker, {
       post: await getPost(),
@@ -139,6 +151,9 @@ describe('postVisibleInterestMatch worker', () => {
       post: { ...post, private: true },
     });
 
-    expect(triggerTypedEvent).not.toHaveBeenCalled();
+    const finding = await con
+      .getRepository(InterestFinding)
+      .findOneBy({ interestId: 'uir-1', postId: 'p1' });
+    expect(finding).toBeNull();
   });
 });

@@ -49,7 +49,6 @@ const MODEL_PROVIDER = 'anthropic';
 export type InterestAgentRunResult = {
   findingsAdded: number;
   summaryPostId: string | null;
-  notifyRequested: boolean;
   summary: string;
 };
 
@@ -59,21 +58,16 @@ const buildSystemPrompt = (
   currentTags: string[],
   maxTags: number,
 ): string => {
-  const { post = true, notification = true } = interest.outputModes ?? {};
+  const { post = true } = interest.outputModes ?? {};
   const steps = [
     `1. Call set_interest_tags with the full set of daily.dev tag slugs that represent this interest (max ${maxTags}); it replaces the current set, so include the ones worth keeping and drop the rest.`,
     '2. Call search_daily_dev with a focused query derived from the interest.',
-    '3. For each promising result, call score_finding to get a relevance/quality score.',
-    '4. Call add_to_feed for the results worth surfacing.',
+    '3. For each promising result, call score_finding — it returns an audienceFit quality signal (0-1) that reflects general daily.dev content quality, NOT topical relevance to this interest.',
+    '4. Judge topical relevance yourself from the title and summary. Call add_to_feed only for results that genuinely match the interest, passing a relevance score (0-1) for how well the post matches the interest, plus a short rationale.',
   ];
   if (post) {
     steps.push(
       `${steps.length + 1}. Call write_post once with a short markdown digest of what you found and why it matters.`,
-    );
-  }
-  if (notification) {
-    steps.push(
-      `${steps.length + 1}. Call notify_user once so the user knows new content is ready.`,
     );
   }
 
@@ -81,7 +75,8 @@ const buildSystemPrompt = (
     'You are the daily.dev Interest Agent. You hunt for content matching a single user interest, score it, and deliver it.',
     `The interest is: "${interest.query}".`,
     'Work only with daily.dev content in this run — do not invent URLs or reference external sources.',
-    `FOMO threshold is ${interest.fomoThreshold ?? 0.5} (0 = surface everything, 1 = only the very best). Only add_to_feed items scoring at or above this threshold.`,
+    'Be strict about topical relevance: a well-written post about a different topic must NOT be surfaced. Only add_to_feed posts that are genuinely about the interest.',
+    `FOMO threshold is ${interest.fomoThreshold ?? 0.5} (0 = surface everything, 1 = only the very best). Only add_to_feed items whose relevance score is at or above this threshold.`,
     currentTags.length
       ? `Current tags for this interest: ${currentTags.join(', ')}.`
       : null,
@@ -140,7 +135,6 @@ export const runInterestAgent = async ({
   const state: InterestAgentRunResult = {
     findingsAdded: 0,
     summaryPostId: null,
-    notifyRequested: false,
     summary: '',
   };
 
@@ -206,7 +200,7 @@ export const runInterestAgent = async ({
       name: 'score_finding',
       label: 'Score finding',
       description:
-        'Score a single daily.dev post for relevance and quality. Returns a score between 0 and 1.',
+        'Return the audienceFit quality signal (0-1) for a daily.dev post. This measures general content quality for the daily.dev audience, NOT topical relevance to the interest — judge relevance yourself before surfacing.',
       parameters: Type.Object({
         postId: Type.String(),
       }),
@@ -273,7 +267,7 @@ export const runInterestAgent = async ({
       name: 'add_to_feed',
       label: 'Add to interest feed',
       description:
-        "Add a scored post to the interest's feed as a finding. Provide a short rationale.",
+        "Add a topically-relevant post to the interest's feed as a finding. Pass score as your relevance judgment (0-1) for how well the post matches the interest, plus a short rationale. Only call this for posts genuinely about the interest.",
       parameters: Type.Object({
         postId: Type.String(),
         score: Type.Optional(Type.Number()),
@@ -315,7 +309,7 @@ export const runInterestAgent = async ({
             postId: params.postId,
             score,
             rationale: params.rationale,
-            status: InterestFindingStatus.Surfaced,
+            status: InterestFindingStatus.New,
           })
           .orUpdate(['score', 'rationale', 'status'], ['interestId', 'postId'])
           .execute();
@@ -376,21 +370,6 @@ export const runInterestAgent = async ({
           content: [
             { type: 'text', text: JSON.stringify({ postId: saved.id }) },
           ],
-          details: {},
-        };
-      },
-    });
-
-    pi.registerTool({
-      name: 'notify_user',
-      label: 'Notify user',
-      description:
-        'Signal that new content is available for this interest. Call after write_post.',
-      parameters: Type.Object({}),
-      execute: async () => {
-        state.notifyRequested = true;
-        return {
-          content: [{ type: 'text', text: JSON.stringify({ queued: true }) }],
           details: {},
         };
       },
@@ -458,9 +437,6 @@ export const runInterestAgent = async ({
   ];
   if (interest.outputModes?.post ?? true) {
     activeTools.push('write_post');
-  }
-  if (interest.outputModes?.notification ?? true) {
-    activeTools.push('notify_user');
   }
 
   const resourceLoader = new DefaultResourceLoader({
@@ -535,7 +511,7 @@ export const runInterestAgent = async ({
 
   state.summary = `Added ${state.findingsAdded} finding(s)${
     state.summaryPostId ? ', wrote a summary post' : ''
-  }${state.notifyRequested ? ', notified the user' : ''}.`;
+  }.`;
 
   log.info(
     { interestId: interest.id, ...state },
