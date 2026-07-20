@@ -6,10 +6,6 @@ import { Feed, FeedOrigin } from '../entity/Feed';
 import { AgentSource } from '../entity/Source';
 import { InterestFeedback } from '../entity/InterestFeedback';
 import {
-  InterestFinding,
-  InterestFindingStatus,
-} from '../entity/InterestFinding';
-import {
   UserInterest,
   UserInterestStatus,
   type UserInterestOutputModes,
@@ -249,7 +245,7 @@ export const resolvers: IResolvers<unknown, BaseContext> = {
 
       const interest = await queryReadReplica(ctx.con, ({ queryRunner }) =>
         queryRunner.manager.getRepository(UserInterest).findOne({
-          select: ['id'],
+          select: ['sourceId'],
           where: { id, userId: ctx.userId },
         }),
       );
@@ -258,22 +254,20 @@ export const resolvers: IResolvers<unknown, BaseContext> = {
         throw new NotFoundError('Interest not found');
       }
 
+      if (!interest.sourceId) {
+        return [];
+      }
+
       return graphorm.query<GQLPost>(
         ctx,
         info,
         (builder) => {
           builder.queryBuilder = builder.queryBuilder
-            .innerJoin(
-              InterestFinding,
-              'finding',
-              `finding."postId" = ${builder.alias}.id AND finding."interestId" = :id AND finding.status = :status`,
-              { id, status: InterestFindingStatus.Surfaced },
-            )
-            .where(`${builder.alias}.deleted = false`)
-            .andWhere(`${builder.alias}.private = false`)
-            .andWhere(`${builder.alias}."showOnFeed" = true`)
-            .orderBy('finding.score', 'DESC')
-            .addOrderBy('finding."createdAt"', 'DESC');
+            .where(`${builder.alias}."sourceId" = :sourceId`, {
+              sourceId: interest.sourceId,
+            })
+            .andWhere(`${builder.alias}.deleted = false`)
+            .orderBy(`${builder.alias}."createdAt"`, 'DESC');
           return builder;
         },
         true,

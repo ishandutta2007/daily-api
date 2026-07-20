@@ -527,65 +527,40 @@ describe('agent source post access', () => {
 
 describe('query interestPosts', () => {
   beforeEach(async () => {
+    await con.getRepository(AgentSource).save({
+      id: 'isrc-1',
+      name: 'agent source',
+      handle: 'agent-isrc-1',
+      private: true,
+    });
     await con.getRepository(UserInterest).save({
       id: 'uir-1',
       userId: '1',
       query: 'cool zig projects',
       status: UserInterestStatus.Active,
+      sourceId: 'isrc-1',
     });
-    await con.getRepository(InterestFinding).save([
+    await saveFixtures(con, ArticlePost, [
       {
-        id: 'if-a',
-        interestId: 'uir-1',
-        postId: 'p1',
-        score: 0.5,
-        status: InterestFindingStatus.Surfaced,
-      },
-      {
-        id: 'if-b',
-        interestId: 'uir-1',
-        postId: 'p2',
-        score: 0.9,
-        status: InterestFindingStatus.Surfaced,
-      },
-      {
-        id: 'if-c',
-        interestId: 'uir-1',
-        postId: 'p3',
-        score: 1,
-        status: InterestFindingStatus.Dismissed,
+        id: 'ipost-1',
+        shortId: 'ipost-1',
+        title: 'Interest summary',
+        url: 'http://interest.com/1',
+        sourceId: 'isrc-1',
+        private: true,
+        showOnFeed: false,
       },
     ]);
   });
 
-  it('should return only surfaced findings ordered by score for the owner', async () => {
+  it('should return summary posts hosted in the interest source for the owner', async () => {
     loggedUser = '1';
     const res = await client.query(INTEREST_POSTS, {
       variables: { id: 'uir-1' },
     });
     expect(res.errors).toBeFalsy();
-    expect(res.data.interestPosts).toHaveLength(2);
-    expect(
-      res.data.interestPosts.map((post: { id: string }) => post.id),
-    ).toEqual(['p2', 'p1']);
-  });
-
-  it('should exclude findings whose post is private', async () => {
-    loggedUser = '1';
-    await con.getRepository(InterestFinding).save({
-      id: 'if-d',
-      interestId: 'uir-1',
-      postId: 'p6',
-      score: 0.95,
-      status: InterestFindingStatus.Surfaced,
-    });
-    const res = await client.query(INTEREST_POSTS, {
-      variables: { id: 'uir-1' },
-    });
-    expect(res.errors).toBeFalsy();
-    expect(
-      res.data.interestPosts.some((post: { id: string }) => post.id === 'p6'),
-    ).toBe(false);
+    expect(res.data.interestPosts).toHaveLength(1);
+    expect(res.data.interestPosts[0]).toMatchObject({ id: 'ipost-1' });
   });
 
   it('should reject posts for a non-owner', async () => {
