@@ -628,6 +628,7 @@ export const generateNotificationMap: Record<
   ) => {
     return builder
       .icon(NotificationIcon.Bell)
+      .referenceInterest(ctx.interest)
       .targetUrl(`${process.env.COMMENTS_PREFIX}/agent/${ctx.interest.id}`)
       .uniqueKey(ctx.interest.id);
   },
