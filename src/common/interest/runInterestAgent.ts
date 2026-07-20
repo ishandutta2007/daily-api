@@ -43,7 +43,7 @@ import {
 } from './feedTags';
 
 const DEFAULT_SEARCH_LIMIT = 10;
-const SEARCH_VERSION = 2;
+const SEARCH_VERSION = 3;
 const MODEL_PROVIDER = 'anthropic';
 
 export type InterestAgentRunResult = {
