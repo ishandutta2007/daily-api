@@ -51,7 +51,7 @@ beforeEach(async () => {
   (runInterestAgent as jest.Mock).mockResolvedValue({
     findingsAdded: 0,
     summaryPostId: null,
-    summary: 'Added 0 finding(s).',
+    summary: 'Added 0 finding(s) this run.',
   });
 });
 
@@ -76,7 +76,7 @@ describe('userInterestRun worker', () => {
     (runInterestAgent as jest.Mock).mockResolvedValue({
       findingsAdded: 2,
       summaryPostId: 'post-1',
-      summary: 'Added 2 finding(s), wrote a summary post.',
+      summary: 'Added 2 finding(s) this run, wrote a summary post.',
     });
     await seedFinding('p1', InterestFindingStatus.New);
     await seedFinding('p2', InterestFindingStatus.New);
@@ -91,7 +91,7 @@ describe('userInterestRun worker', () => {
       .findOneByOrFail({ id: 'uir-1' });
     expect(interest.lastRunAt).toBeTruthy();
     expect(interest.lastRunSummary).toEqual(
-      'Added 2 finding(s), wrote a summary post.',
+      'Added 2 finding(s) this run, wrote a summary post.',
     );
 
     const call = (triggerTypedEvent as jest.Mock).mock.calls.find(
@@ -125,7 +125,7 @@ describe('userInterestRun worker', () => {
     (runInterestAgent as jest.Mock).mockResolvedValue({
       findingsAdded: 0,
       summaryPostId: 'post-1',
-      summary: 'Added 0 finding(s), wrote a summary post.',
+      summary: 'Added 0 finding(s) this run, wrote a summary post.',
     });
 
     await expectSuccessfulTypedBackground<'api.v1.interest-run-requested'>(

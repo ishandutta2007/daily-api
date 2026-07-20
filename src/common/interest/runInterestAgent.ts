@@ -47,19 +47,36 @@ export type InterestAgentRunResult = {
   summary: string;
 };
 
+export const getInterestAgentTools = (
+  outputModes?: UserInterest['outputModes'],
+): string[] => {
+  const tools = ['set_interest_tags', 'search_daily_dev'];
+  if (outputModes?.feed ?? true) {
+    tools.push('score_finding', 'add_to_feed');
+  }
+  if (outputModes?.post ?? true) {
+    tools.push('write_post');
+  }
+  return tools;
+};
+
 const buildSystemPrompt = (
   interest: UserInterest,
   feedback: string[],
   currentTags: string[],
   maxTags: number,
 ): string => {
-  const { post = true } = interest.outputModes ?? {};
+  const { feed = true, post = true } = interest.outputModes ?? {};
   const steps = [
     `1. Call set_interest_tags with the full set of daily.dev tag slugs that represent this interest (max ${maxTags}); it replaces the current set, so include the ones worth keeping and drop the rest.`,
     '2. Call search_daily_dev with a focused query derived from the interest.',
-    '3. For each promising result, call score_finding — it returns an audienceFit quality signal (0-1) that reflects general daily.dev content quality, NOT topical relevance to this interest.',
-    '4. Judge topical relevance yourself from the title and summary. Call add_to_feed only for results that genuinely match the interest, passing a relevance score (0-1) for how well the post matches the interest, plus a short rationale.',
   ];
+  if (feed) {
+    steps.push(
+      `${steps.length + 1}. For each promising result, call score_finding — it returns an audienceFit quality signal (0-1) that reflects general daily.dev content quality, NOT topical relevance to this interest.`,
+      `${steps.length + 2}. Judge topical relevance yourself from the title and summary. Call add_to_feed only for results that genuinely match the interest, passing a relevance score (0-1) for how well the post matches the interest, plus a short rationale.`,
+    );
+  }
   if (post) {
     steps.push(
       `${steps.length + 1}. Call write_post once with a short markdown digest of what you found and why it matters.`,
@@ -404,15 +421,7 @@ export const runInterestAgent = async ({
     : [];
   const currentTags = currentTagRows.map((row) => row.tag);
 
-  const activeTools = [
-    'set_interest_tags',
-    'search_daily_dev',
-    'score_finding',
-    'add_to_feed',
-  ];
-  if (interest.outputModes?.post ?? true) {
-    activeTools.push('write_post');
-  }
+  const activeTools = getInterestAgentTools(interest.outputModes);
 
   const resourceLoader = new DefaultResourceLoader({
     cwd: agentDir,
@@ -484,7 +493,7 @@ export const runInterestAgent = async ({
     });
   }
 
-  state.summary = `Added ${state.findingsAdded} finding(s)${
+  state.summary = `Added ${state.findingsAdded} finding(s) this run${
     state.summaryPostId ? ', wrote a summary post' : ''
   }.`;
 

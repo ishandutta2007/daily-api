@@ -137,6 +137,30 @@ describe('postVisibleInterestMatch worker', () => {
     expect(finding).toBeNull();
   });
 
+  it('does not add a finding when the feed output is off', async () => {
+    await con.getRepository(FeedTag).save({ feedId: 'feed-1', tag: 'zig' });
+    await con.getRepository(UserInterest).update(
+      { id: 'uir-1' },
+      {
+        outputModes: {
+          feed: false,
+          post: true,
+          digest: false,
+          notification: true,
+        },
+      },
+    );
+
+    await expectSuccessfulTypedBackground<'api.v1.post-visible'>(worker, {
+      post: await getPost(),
+    });
+
+    const finding = await con
+      .getRepository(InterestFinding)
+      .findOneBy({ interestId: 'uir-1', postId: 'p1' });
+    expect(finding).toBeNull();
+  });
+
   it('skips when the relevance score is below the FOMO threshold', async () => {
     await con.getRepository(FeedTag).save({ feedId: 'feed-1', tag: 'zig' });
     await con
