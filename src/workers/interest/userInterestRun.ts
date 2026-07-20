@@ -38,18 +38,18 @@ export const userInterestRunWorker: TypedWorker<'api.v1.interest-run-requested'>
         where: { interestId: interest.id, status: InterestFindingStatus.New },
       });
 
-      if (!newFindings.length) {
-        return;
+      if (newFindings.length) {
+        await con
+          .getRepository(InterestFinding)
+          .update(
+            { id: In(newFindings.map((finding) => finding.id)) },
+            { status: InterestFindingStatus.Surfaced },
+          );
       }
 
-      await con
-        .getRepository(InterestFinding)
-        .update(
-          { id: In(newFindings.map((finding) => finding.id)) },
-          { status: InterestFindingStatus.Surfaced },
-        );
+      const hasContent = newFindings.length > 0 || !!result.summaryPostId;
 
-      if (interest.outputModes?.notification ?? true) {
+      if (hasContent && (interest.outputModes?.notification ?? true)) {
         await triggerTypedEvent(logger, 'api.v1.interest-content-available', {
           interestId: interest.id,
           userId: interest.userId,

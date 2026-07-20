@@ -110,7 +110,7 @@ describe('userInterestRun worker', () => {
     expect(surfaced).toEqual(2);
   });
 
-  it('does not notify when there are no new findings', async () => {
+  it('does not notify when the run produced no findings and no summary post', async () => {
     await seedFinding('p1', InterestFindingStatus.Surfaced);
 
     await expectSuccessfulTypedBackground<'api.v1.interest-run-requested'>(
@@ -119,6 +119,29 @@ describe('userInterestRun worker', () => {
     );
 
     expect(triggerTypedEvent).not.toHaveBeenCalled();
+  });
+
+  it('notifies for a summary post even when there are no new findings', async () => {
+    (runInterestAgent as jest.Mock).mockResolvedValue({
+      findingsAdded: 0,
+      summaryPostId: 'post-1',
+      summary: 'Added 0 finding(s), wrote a summary post.',
+    });
+
+    await expectSuccessfulTypedBackground<'api.v1.interest-run-requested'>(
+      worker,
+      { interestId: 'uir-1' },
+    );
+
+    const call = (triggerTypedEvent as jest.Mock).mock.calls.find(
+      (c) => c[1] === 'api.v1.interest-content-available',
+    );
+    expect(call?.[2]).toEqual({
+      interestId: 'uir-1',
+      userId: usersFixture[0].id,
+      count: 0,
+      runAt: expect.any(Number),
+    });
   });
 
   it('surfaces new findings but does not notify when notifications are disabled', async () => {

@@ -8,10 +8,6 @@ export const interestContentAvailableNotification: TypedNotificationWorker<'api.
     handler: async (data, con) => {
       const { interestId, userId, count, runAt } = data;
 
-      if (count < 1) {
-        return;
-      }
-
       const interest = await con.getRepository(UserInterest).findOne({
         select: ['id', 'query'],
         where: { id: interestId, userId },
