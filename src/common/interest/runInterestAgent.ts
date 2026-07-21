@@ -27,6 +27,7 @@ import {
 import { InterestFeedback } from '../../entity/InterestFeedback';
 import type { UserInterest } from '../../entity/UserInterest';
 import { insertFreeformPost } from '../post';
+import { getDiscussionLink } from '../links';
 import { markdown } from '../markdown';
 import { updateFlagsStatement } from '../utils';
 import { generateShortId } from '../../ids';
@@ -79,7 +80,7 @@ const buildSystemPrompt = (
   }
   if (post) {
     steps.push(
-      `${steps.length + 1}. Call write_post once with a short markdown digest of what you found and why it matters.`,
+      `${steps.length + 1}. Call write_post once with a short markdown digest of what you found and why it matters. When linking a post, use ONLY the exact url returned by search_daily_dev — never invent or guess URLs.`,
     );
   }
 
@@ -138,7 +139,7 @@ export const runInterestAgent = async ({
       name: 'search_daily_dev',
       label: 'Search daily.dev',
       description:
-        'Search daily.dev for posts matching a query. Returns candidate posts with their ids and titles.',
+        'Search daily.dev for posts matching a query. Returns candidate posts with their ids, titles, and canonical daily.dev urls.',
       parameters: Type.Object({
         query: Type.String(),
         limit: Type.Optional(Type.Number()),
@@ -158,7 +159,7 @@ export const runInterestAgent = async ({
           .filter(Boolean);
         const posts = postIds.length
           ? await con.getRepository(Post).find({
-              select: ['id', 'title'],
+              select: ['id', 'title', 'slug'],
               where: {
                 id: In(postIds),
                 private: false,
@@ -170,6 +171,7 @@ export const runInterestAgent = async ({
         const candidates = posts.map((post) => ({
           postId: post.id,
           title: post.title,
+          url: getDiscussionLink(post.slug ?? post.id),
         }));
         log.info(
           {
@@ -332,7 +334,7 @@ export const runInterestAgent = async ({
       name: 'write_post',
       label: 'Write summary post',
       description:
-        "Write a short markdown digest post summarizing the findings. Hosted in the interest's source.",
+        "Write a short markdown digest post summarizing the findings. Hosted in the interest's source. When you link a post, use ONLY the exact `url` returned by search_daily_dev — never invent, shorten, or guess a URL, and never write relative links.",
       parameters: Type.Object({
         title: Type.String(),
         content: Type.String(),
