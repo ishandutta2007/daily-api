@@ -97,7 +97,7 @@ const buildSystemPrompt = (
     );
     if (externalEnabled) {
       steps.push(
-        `${steps.length + 1}. If daily.dev doesn't have enough strong matches, call discover_external with a focused search query to pull in external web content — it is ingested into daily.dev and added to the feed automatically.`,
+        `${steps.length + 1}. Also call discover_external with one or more focused queries to pull in web content. Treat the web as an equal inventory to daily.dev — search it freely on every run to broaden coverage, not only when daily.dev is thin. Discovered pages are ingested into daily.dev and added to the feed automatically.`,
       );
     }
   }
@@ -111,7 +111,7 @@ const buildSystemPrompt = (
     'You are the daily.dev Interest Agent. You hunt for content matching a single user interest, score it, and deliver it.',
     `The interest is: "${interest.query}".`,
     externalEnabled
-      ? 'Prefer daily.dev content; use discover_external only to fill gaps. Never invent URLs — only use urls returned by search_daily_dev or discover_external.'
+      ? 'Search daily.dev and the web as equal inventories — use both freely and surface the best matches from either, favouring neither by default. Never invent URLs — only use urls returned by search_daily_dev or discover_external.'
       : 'Work only with daily.dev content in this run — do not invent URLs or reference external sources.',
     'Be strict about topical relevance: a well-written post about a different topic must NOT be surfaced. Only add_to_feed posts that are genuinely about the interest.',
     `FOMO threshold is ${interest.fomoThreshold ?? 0.5} (0 = surface everything, 1 = only the very best). Only add_to_feed items whose relevance score is at or above this threshold.`,
@@ -577,7 +577,7 @@ export const runInterestAgent = async ({
       name: 'discover_external',
       label: 'Discover external content',
       description:
-        "Search the web for content matching the interest that is NOT already on daily.dev. Pass a focused search query. Matching pages are ingested into daily.dev and added to the interest's feed as findings. Use this to broaden beyond daily.dev's existing content.",
+        "Search the web for content matching the interest. Pass a focused search query. Matching pages are ingested into daily.dev and added to the interest's feed as findings. Treat this as an equal inventory to daily.dev search and use it freely on every run — not just when daily.dev is thin.",
       parameters: Type.Object({
         query: Type.String(),
         limit: Type.Optional(Type.Number()),
