@@ -9,6 +9,7 @@ import { User } from '../entity';
 import { getDiscussionLink } from '../common/links';
 import { queryReadReplica } from '../common/queryReadReplica';
 import { fallbackImages } from '../config';
+import { PUBLIC_API_PREFIX } from '../common/constants';
 
 const sendRedirectAnalytics = async (
   con: DataSource,
@@ -274,6 +275,29 @@ export default async function (fastify: FastifyInstance): Promise<void> {
     return res.redirect('https://r.daily.dev/api-redirect');
   });
   fastify.get('/landing', (req, res) => res.redirect('https://daily.dev'));
+
+  // The spec lives at /public/v1/docs/{json,yaml}, but agents probe the
+  // conventional paths first and conclude we have no API when they 404.
+  // Aliases rather than copies, so the generated spec stays the one source.
+  //
+  // 302 rather than 301 on purpose: the target is version-scoped, so when
+  // a v2 prefix ships these aliases should point at it. Browsers cache a
+  // 301 indefinitely regardless of Cache-Control, which would strand the
+  // alias on v1. The cache header still spares agents a daily round trip.
+  const openApiAliases: [string, string][] = [
+    ['/openapi.json', `${PUBLIC_API_PREFIX}/docs/json`],
+    ['/openapi.yaml', `${PUBLIC_API_PREFIX}/docs/yaml`],
+    ['/.well-known/openapi.json', `${PUBLIC_API_PREFIX}/docs/json`],
+  ];
+  openApiAliases.forEach(([alias, target]) => {
+    fastify.get(alias, (_, res) =>
+      res
+        .header('Cache-Control', 'public, max-age=86400')
+        .status(302)
+        .redirect(target),
+    );
+  });
+
   fastify.get('/tos', (req, res) => res.redirect('https://daily.dev/tos'));
   fastify.get('/privacy', (req, res) =>
     res.redirect('https://daily.dev/privacy'),
