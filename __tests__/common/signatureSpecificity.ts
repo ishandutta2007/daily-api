@@ -112,3 +112,112 @@ describe('isTooGenericToEmit — standards vocabulary (playbook §13 v5.18)', ()
     expect(isTooGenericToEmit(' Access_Token ')).toBe(true);
   });
 });
+
+describe('isTooGenericToEmit — ownerless tokens (playbook §13 v5.24)', () => {
+  it('should reject a language builtin written in call form', () => {
+    // `affected: ["eval()"]` on a Semantic Kernel CVE fires on every Python,
+    // JS, PHP and Ruby file that calls eval — none of them Semantic Kernel.
+    for (const token of [
+      'eval()',
+      'exec()',
+      'execl()',
+      'require()',
+      'decode()',
+      'fetch()',
+      'flush()',
+      'unserialize()',
+      'EVAL()',
+    ]) {
+      expect({ token, generic: isTooGenericToEmit(token) }).toEqual({
+        token,
+        generic: true,
+      });
+    }
+  });
+
+  it('should keep the BARE builtin word — the detector gates that at match time', () => {
+    // Deliberate, and the line this class does not cross: `eval` is Redis's
+    // Lua EVAL command and `require` is a real Ruby method. A bare lowercase
+    // word may be a legitimate signature, so it survives emission and the
+    // detector requires the claim's entity to resolve in the same input.
+    for (const token of [
+      'eval',
+      'exec',
+      'require',
+      'classname',
+      'postinstall',
+    ]) {
+      expect({ token, generic: isTooGenericToEmit(token) }).toEqual({
+        token,
+        generic: false,
+      });
+    }
+  });
+
+  it('should keep a call form that is not a language builtin', () => {
+    for (const token of [
+      'Bun.serve()',
+      'getEntityRecords()',
+      'setImmediate()',
+      'wp_mail()',
+    ]) {
+      expect({ token, generic: isTooGenericToEmit(token) }).toEqual({
+        token,
+        generic: false,
+      });
+    }
+  });
+
+  it('should keep a call form carrying a real argument', () => {
+    // `eval(userInput)` names the caller's own variable — a different token,
+    // and a specific one.
+    expect(isTooGenericToEmit('eval(userInput)')).toBe(false);
+  });
+
+  it('should reject an ownerless build, config or CI artefact', () => {
+    // Measured 2026-08-23: bundle.js sits on 30 unrelated ledger entities,
+    // pull_request_target on 14, .env on 14, binding.gyp on 8.
+    for (const token of [
+      'bundle.js',
+      'binding.gyp',
+      'tsconfig.json',
+      '.env',
+      '.vscode/tasks.json',
+      'docker-compose.yaml',
+      'pom.xml',
+      'go.mod',
+      'pyproject.toml',
+      '/etc/passwd',
+      '/tmp',
+      'node_modules',
+      'pull_request_target',
+      'workflow_run',
+      'GITHUB_TOKEN',
+      'NO_PROXY',
+      '--force',
+      '--ignore-scripts',
+    ]) {
+      expect({ token, generic: isTooGenericToEmit(token) }).toEqual({
+        token,
+        generic: true,
+      });
+    }
+  });
+
+  it('should keep a vendor-owned config file and a real package coordinate', () => {
+    // `.claude/settings.json` is Anthropic's, `@injectivelabs/sdk-ts@1.20.21`
+    // is correct on all 18 entities of that advisory — owned by somebody.
+    for (const token of [
+      '.claude/settings.json',
+      '.cursor/mcp.json',
+      '@injectivelabs/sdk-ts@1.20.21',
+      'reviewdog/action-setup',
+      'wp-config.php',
+    ]) {
+      expect({ token, generic: isTooGenericToEmit(token) }).toEqual({
+        token,
+        generic: false,
+      });
+    }
+  });
+});

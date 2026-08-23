@@ -207,6 +207,85 @@ export const STANDARDS_VOCABULARY = new Set(
   ].map((term) => term.toLowerCase()),
 );
 
+// Ownerless tokens that still pass the general specificity rules. Bare builtins
+// stay eligible for the detector's entity gate; only their empty call forms are
+// unambiguously language constructs and can be refused at emission time.
+// Language builtins and keywords, refused only in call form.
+// prettier-ignore
+const LANGUAGE_BUILTINS = [
+  // evaluation and process spawning — the shapes that read as an accusation
+  'eval', 'exec', 'execl', 'execv', 'execve', 'system', 'popen', 'spawn',
+  // module loading
+  'require', 'import', 'include',
+  // ubiquitous conversion / IO builtins
+  'print', 'println', 'printf', 'sprintf', 'echo', 'decode', 'encode',
+  'parse', 'stringify', 'flush', 'fetch', 'open', 'close', 'read', 'write',
+  // reflection and lifecycle hooks a language defines
+  'assert', 'typeof', 'instanceof', 'sizeof', 'isset', 'unset',
+  'serialize', 'unserialize', 'clone', 'super', 'this', 'self',
+];
+
+// Interchange-format field names and ownerless build/CI/runtime artefacts: a
+// name defined by a FILE FORMAT or a convention that many tools emit, never by
+// one product. `bundle.js` is every bundler's output, `tsconfig.json` is in
+// every TypeScript repo, `/etc/passwd` is on every Unix box, `--force` is on
+// every CLI. A claim keeps firing through its entity; only the false
+// accusation against unrelated code is removed.
+// prettier-ignore
+const OWNERLESS_ARTIFACTS = [
+  // build and dependency manifests
+  'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lock', 'bun.lockb',
+  'go.mod', 'go.sum', 'cargo.toml', 'cargo.lock', 'pom.xml', 'build.gradle',
+  'pyproject.toml', 'requirements.txt', 'setup.py', 'gemfile.lock',
+  'composer.json', 'composer.lock', 'bower.json', 'build.rs', 'binding.gyp',
+  'build.zig.zon', 'cmakelists.txt',
+  // toolchain config that lives in essentially every repo of its language
+  'tsconfig.json', 'jsconfig.json', 'tailwind.config.js', 'webpack.config.js',
+  'vite.config.js', 'rollup.config.js', 'babel.config.js', '.babelrc',
+  '.eslintrc', '.eslintrc.*', '.prettierrc', '.editorconfig', '.gitignore',
+  '.gitattributes', '.npmrc', '.nvmrc', '.dockerignore', '.env', '.env.local',
+  'docker-compose.yml', 'docker-compose.yaml', 'web.config',
+  '.vscode/tasks.json', '.vscode/settings.json', '.vscode/launch.json',
+  // build outputs and ubiquitous directory names
+  'bundle.js', 'main.js', 'index.js', 'app.js', 'vendor.js', 'weights.bin',
+  'node_modules', '.git', '.cache',
+  // generic filesystem paths
+  '/tmp', '/var/tmp', '/etc/hosts', '/etc/passwd', '/etc/shadow',
+  '/etc/nsswitch.conf', '/bin/sh', '/bin/bash', '/dev/null', '/proc/self/environ',
+  // CI event and lifecycle keys many tools define identically
+  'pull_request_target', 'pull_request', 'workflow_run', 'workflow_dispatch',
+  // de-facto standard environment variables
+  'github_token', 'no_proxy', 'http_proxy', 'https_proxy', 'ld_preload',
+  'ld_library_path',
+  // generic CLI flags — every CLI on earth has these
+  '--force', '--verbose', '--quiet', '--debug', '--help', '--version',
+  '--target', '--output', '--config', '--insecure', '--clean', '--dry-run',
+  '--ignore-scripts', '--extra-index-url',
+];
+
+// The ownerless union, lowered once. Same exact-membership contract as
+// STANDARDS_VOCABULARY: membership is tested on the lowered token.
+export const OWNERLESS_VOCABULARY = new Set(
+  [...OWNERLESS_ARTIFACTS].map((term) => term.toLowerCase()),
+);
+
+// Language builtins are matched in CALL FORM only: `eval()` is refused, bare
+// `eval` is not. Trailing argument text is not stripped — `eval(userInput)`
+// names the caller's own variable and is a different, specific token.
+const CALL_FORM = /^([a-z_][a-z0-9_]*)\(\)$/i;
+
+export const isOwnerlessToken = (token: string): boolean => {
+  const lowered = token.trim().toLowerCase();
+
+  if (OWNERLESS_VOCABULARY.has(lowered)) {
+    return true;
+  }
+
+  const call = CALL_FORM.exec(lowered);
+
+  return !!call && LANGUAGE_BUILTINS.includes(call[1]);
+};
+
 // Two questions, in order. Is the WHOLE token standards vocabulary — a term a
 // published specification defines, so it names a protocol rather than an API?
 // Then, split on non-alphanumerics: is EVERY segment a common word, numeric,
@@ -218,6 +297,10 @@ export const STANDARDS_VOCABULARY = new Set(
 // verdict, but the empty/whitespace token is generic too.
 export const isTooGenericToEmit = (token: string): boolean => {
   if (STANDARDS_VOCABULARY.has(token.trim().toLowerCase())) {
+    return true;
+  }
+
+  if (isOwnerlessToken(token)) {
     return true;
   }
 
