@@ -5,6 +5,7 @@ import {
   isEntityPhrase,
   normalizeSignatureToken as normalize,
 } from './ledgerEntityNames';
+import { isOwnEntityMention, ownEntityNames } from './ownEntityMention';
 
 // Where a signature changes what a reader does. `release` and `new_capability`
 // are two thirds of the ledger and make nothing stale — measured at 0/45 and
@@ -106,6 +107,7 @@ export const extractClaimSignatures = async ({
   claim,
   entityName,
   entityAliases = [],
+  entityCodeOnlyAliases = [],
   proseEntityNames,
 }: {
   client: AnthropicClient;
@@ -113,6 +115,7 @@ export const extractClaimSignatures = async ({
   claim: Pick<Claim, 'statement' | 'changeType'>;
   entityName: string;
   entityAliases?: string[];
+  entityCodeOnlyAliases?: string[];
   proseEntityNames?: Set<string>;
 }): Promise<ClaimSignatures> => {
   const response = await client.createMessage({
@@ -132,10 +135,21 @@ export const extractClaimSignatures = async ({
   const input = response.content?.find(({ input }) => !!input)?.input ?? {};
   // The entity is already on the claim, and a token repeating it matches every
   // plan that mentions the technology at all rather than the change — the
-  // prompt says so, and this makes it true.
-  const entityNames = new Set(
-    [entityName, ...entityAliases].map(normalize).filter(Boolean),
-  );
+  // prompt says so, and this makes it true. Since v5.21 the same sentence
+  // covers a module path INSIDE the entity's package: `next/image` on a
+  // Next.js claim names Next.js, not the change (./ownEntityMention.ts).
+  //
+  // No `keepWhenNoSurvivor` here, and that is the difference between an
+  // extractor and a reviewer. The carve-out exists for a person who chose a
+  // lone module path on purpose because the claim's subject is the module;
+  // an extractor that returns nothing but the product's own name has simply
+  // disobeyed the prompt, and keeping that array would file a signature that
+  // matches every reader who imports the package.
+  const names = ownEntityNames({
+    canonicalName: entityName,
+    aliases: entityAliases,
+    codeOnlyAliases: entityCodeOnlyAliases,
+  });
   // The specificity bar (smith-brain/docs/claim-ledger-review-playbook.md
   // §13, v5.9): matching is exact-equality, so a generic token like "name"
   // accuses every codebase on earth. When a change's only symbol is generic,
@@ -145,7 +159,7 @@ export const extractClaimSignatures = async ({
     tokens.filter(
       (token) =>
         !CVE.test(token) &&
-        !entityNames.has(normalize(token)) &&
+        !isOwnEntityMention(token, names) &&
         !isEntityPhrase(token, proseEntityNames ?? new Set()) &&
         !isTooGenericToEmit(token),
     );

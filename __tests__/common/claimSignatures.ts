@@ -24,6 +24,24 @@ const run = (
     proseEntityNames,
   });
 
+const nextStatement =
+  'In Next.js 16 the images.domains option for next/image is deprecated in favor of images.remotePatterns.';
+
+// The own-entity bar needs the entity's code-only aliases: `next` is one on
+// Next.js, and `next/image` is its module path however the token arrived.
+const runNext = (input: Record<string, unknown>) =>
+  extractClaimSignatures({
+    client: clientReturning(input),
+    model: 'test-model',
+    claim: {
+      statement: nextStatement,
+      changeType: ClaimChangeType.Deprecation,
+    },
+    entityName: 'Next.js',
+    entityAliases: ['nextjs'],
+    entityCodeOnlyAliases: ['next'],
+  });
+
 describe('extractClaimSignatures', () => {
   it('should keep the tokens the statement actually contains', async () => {
     await expect(
@@ -126,5 +144,30 @@ describe('extractClaimSignatures', () => {
         new Set(['djangorestframework', 'celery']),
       ),
     ).resolves.toMatchObject({ affected: ['celery', 'forms.URLField'] });
+  });
+
+  it('should drop a module path inside the entity own package beside a real symbol', async () => {
+    // Playbook §13 v5.21 / rot-bench rule 1b: `next/image` names Next.js, and
+    // the entity field already says that. `{images.domains, next/image}` is
+    // the array that fired tier-A on six reps which imported the module and
+    // configured no images at all.
+    await expect(
+      runNext({
+        affected: ['images.domains', 'next/image'],
+        superseding: ['images.remotePatterns'],
+      }),
+    ).resolves.toEqual({
+      affected: ['images.domains'],
+      superseding: ['images.remotePatterns'],
+    });
+  });
+
+  it('should empty an array holding nothing but the entity own names', async () => {
+    // No subject-level carve-out on this side. The prompt says "never the
+    // entity's own name"; an extractor that returns only that has disobeyed
+    // it, and the claim still reaches a relevant diff through its entity.
+    await expect(
+      runNext({ affected: ['next/image', 'Next.js'], superseding: [] }),
+    ).resolves.toEqual({ affected: [], superseding: [] });
   });
 });

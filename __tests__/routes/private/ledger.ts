@@ -1509,6 +1509,101 @@ describe('private ledger routes', () => {
     });
   });
 
+  // Playbook §13 v5.21 / rot-bench detector 0.13.0 rule 1b. `next/image` names
+  // Next.js; it does not say which of Next.js's changes the reader touched,
+  // which is the only thing an `affected` array exists to say.
+  const seedOwnEntityClaim = async () => {
+    await con.getRepository(LedgerEntity).save({
+      id: parentEntityId,
+      canonicalName: 'Next.js',
+      kind: LedgerEntityKind.Package,
+      aliases: ['nextjs'],
+      codeOnlyAliases: ['next'],
+    });
+    await con.getRepository(Claim).save({
+      id: claimId,
+      entityId: parentEntityId,
+      changeType: ClaimChangeType.Deprecation,
+      statement:
+        'images.domains is deprecated in favour of images.remotePatterns.',
+      effectiveDate: '2026-05-02',
+      status: ClaimStatus.Corroborated,
+    });
+  };
+
+  it('should drop a module path inside the claim entity own package when the array names something else', async () => {
+    await seedOwnEntityClaim();
+    clearProseEntityNameCache();
+
+    await request(app.server)
+      .post('/p/ledger/claims/update')
+      .set(serviceHeaders)
+      .send({
+        claimId,
+        affected: ['images.domains', 'next/image'],
+        superseding: ['images.remotePatterns', 'next'],
+      })
+      .expect(200);
+
+    expect(
+      await con.getRepository(Claim).findOneBy({ id: claimId }),
+    ).toMatchObject({
+      affected: ['images.domains'],
+      superseding: ['images.remotePatterns'],
+    });
+  });
+
+  it('should keep an array that is nothing but own-entity mentions, which is the subject-level claim', async () => {
+    // `0ded4c9b` carries `{next/image}` and nothing else because its subject
+    // is a usage pattern no token captures. The array is not wrong there; it
+    // is simply not a signature, and emptying it deletes the only thing the
+    // claim says. Only a person can tell those apart.
+    await seedOwnEntityClaim();
+    clearProseEntityNameCache();
+
+    await request(app.server)
+      .post('/p/ledger/claims/update')
+      .set(serviceHeaders)
+      .send({ claimId, affected: ['next/image'] })
+      .expect(200);
+
+    expect(
+      await con.getRepository(Claim).findOneBy({ id: claimId }),
+    ).toMatchObject({ affected: ['next/image'] });
+  });
+
+  it('should drop an own-entity mention from a candidate merging into a new claim', async () => {
+    await con.getRepository(LedgerEntity).save({
+      id: parentEntityId,
+      canonicalName: 'Next.js',
+      kind: LedgerEntityKind.Package,
+      aliases: ['nextjs'],
+      codeOnlyAliases: ['next'],
+    });
+    clearProseEntityNameCache();
+    await seedCandidate();
+
+    await request(app.server)
+      .post('/p/ledger/candidates/resolve')
+      .set(serviceHeaders)
+      .send({
+        candidateId,
+        action: 'merge',
+        affected: ['images.domains', 'next/image'],
+        superseding: ['images.remotePatterns'],
+      })
+      .expect(200);
+
+    expect(
+      await con
+        .getRepository(Claim)
+        .findOneByOrFail({ statement: 'Next.js deprecates the pages router.' }),
+    ).toMatchObject({
+      affected: ['images.domains'],
+      superseding: ['images.remotePatterns'],
+    });
+  });
+
   it('should link a claim to the claim that supersedes it and unlink it again', async () => {
     await seedHierarchy();
     const reversal = await con.getRepository(Claim).save({

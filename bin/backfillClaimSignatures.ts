@@ -60,6 +60,11 @@ const arg = (name: string): string | undefined =>
     .addSelect('c."changeType"', 'changeType')
     .addSelect('le."canonicalName"', 'entityName')
     .addSelect('le.aliases', 'entityAliases')
+    // The own-entity bar (playbook §13 v5.21) reads code-only aliases too:
+    // `next` is Next.js's code-only alias and `next/image` is its module path
+    // however the token arrived, so leaving the column out would let exactly
+    // the class the bar exists for straight through.
+    .addSelect('le."codeOnlyAliases"', 'entityCodeOnlyAliases')
     .where('c."signaturesBackfilledAt" IS NULL')
     .andWhere('c."changeType" IN (:...changeTypes)', { changeTypes })
     .orderBy('c.id', 'ASC')
@@ -70,6 +75,7 @@ const arg = (name: string): string | undefined =>
       changeType: ClaimChangeType;
       entityName: string;
       entityAliases: string[];
+      entityCodeOnlyAliases: string[];
     }>();
 
   console.log(
@@ -103,6 +109,7 @@ const arg = (name: string): string | undefined =>
               claim,
               entityName: claim.entityName,
               entityAliases: claim.entityAliases,
+              entityCodeOnlyAliases: claim.entityCodeOnlyAliases,
               proseEntityNames,
             });
 

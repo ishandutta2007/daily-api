@@ -31,6 +31,10 @@ import {
   loadProseEntityNames,
 } from '../../common/ledgerEntityNames';
 import {
+  ownEntityNames,
+  withoutOwnEntityMentions,
+} from '../../common/ownEntityMention';
+import {
   assertLedgerNamesAvailable,
   evidenceDerivedDate,
   expandLedgerEntityIds,
@@ -199,22 +203,49 @@ const describedColumns = async ({
 const pickOverride = <T>(override: T | undefined, original: T): T =>
   typeof override === 'undefined' ? original : override;
 
-// The half of the specificity bar the schema cannot apply, because it needs the
-// ledger's own names.
-const withoutEntityNames = async ({
+// The halves of the specificity bar the schema cannot apply, because they need
+// the ledger's own names: v5.17's multi-word technology phrase, which needs
+// EVERY entity's names, and v5.21's own-entity mention, which needs the names
+// of the one entity the claim is filed against.
+//
+// Both are applied here rather than in the schema and both filter rather than
+// reject, for the reason the schema's own note gives: the operator's other
+// overrides in the same call are still valid, and a change whose only symbol
+// is refused legitimately carries none.
+const sanitizeSignatures = async ({
   con,
   tokens,
+  entityId,
 }: {
   con: DataSource | EntityManager;
   tokens: string[];
+  entityId: string;
 }): Promise<string[]> => {
   if (!tokens.length) {
     return tokens;
   }
 
   const names = await loadProseEntityNames(con);
+  const phrasesRemoved = tokens.filter(
+    (token) => !isEntityPhrase(token, names),
+  );
+  const entity = await con
+    .getRepository(LedgerEntity)
+    .findOneBy({ id: entityId });
 
-  return tokens.filter((token) => !isEntityPhrase(token, names));
+  if (!entity) {
+    return phrasesRemoved;
+  }
+
+  // `keepWhenNoSurvivor` is granted here and nowhere else. A reviewer writing
+  // `affected: ['next/image']` and nothing else is making the subject-level
+  // call this rule cannot make for them, and emptying that array would delete
+  // the only thing the claim says.
+  return withoutOwnEntityMentions({
+    tokens: phrasesRemoved,
+    names: ownEntityNames(entity),
+    keepWhenNoSurvivor: true,
+  });
 };
 
 const claimRowsBuilder = (manager: EntityManager) =>
@@ -306,12 +337,14 @@ const createClaimFromCandidate = async ({
     dateSource: effectiveDate
       ? ClaimDateSource.Extracted
       : (derived?.dateSource ?? null),
-    affected: await withoutEntityNames({
+    affected: await sanitizeSignatures({
       con: manager,
+      entityId,
       tokens: pickOverride(body.affected, candidate.affected),
     }),
-    superseding: await withoutEntityNames({
+    superseding: await sanitizeSignatures({
       con: manager,
+      entityId,
       tokens: pickOverride(body.superseding, candidate.superseding),
     }),
   });
@@ -1140,11 +1173,16 @@ export default async (fastify: FastifyInstance): Promise<void> => {
         sunsetDate: body.sunsetDate,
       }),
       ...(typeof body.affected !== 'undefined' && {
-        affected: await withoutEntityNames({ con, tokens: body.affected }),
+        affected: await sanitizeSignatures({
+          con,
+          entityId: claim.entityId,
+          tokens: body.affected,
+        }),
       }),
       ...(typeof body.superseding !== 'undefined' && {
-        superseding: await withoutEntityNames({
+        superseding: await sanitizeSignatures({
           con,
+          entityId: claim.entityId,
           tokens: body.superseding,
         }),
       }),
