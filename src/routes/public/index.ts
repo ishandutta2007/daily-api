@@ -32,6 +32,32 @@ const PUBLIC_API_BASE_URL = `https://api.daily.dev${PUBLIC_API_PREFIX}`;
 const SKILL_MD_URL =
   'https://raw.githubusercontent.com/dailydotdev/daily/master/skills/daily.dev/SKILL.md';
 
+// Function-calling clients derive the tool name from operationId, and an
+// operation without one is awkward for them to call. Rather than hand-write
+// 64 of them, derive a stable id from method and path: GET /feeds/tag/{tag}
+// becomes getFeedsTagByTag. Deterministic, so the spec stays diff-stable.
+export const buildOperationId = (method: string, url: string): string => {
+  const segments = url
+    .replace(new RegExp(`^${PUBLIC_API_PREFIX}`), '')
+    .split('/')
+    .filter(Boolean)
+    .map((segment) =>
+      segment.startsWith('{') ? `by-${segment.replace(/[{}]/g, '')}` : segment,
+    );
+
+  const name = [method.toLowerCase(), ...segments]
+    .join('-')
+    .replace(/[^a-zA-Z0-9-]/g, '-')
+    .split('-')
+    .filter(Boolean)
+    .map((part, index) =>
+      index === 0 ? part.toLowerCase() : part[0].toUpperCase() + part.slice(1),
+    )
+    .join('');
+
+  return name;
+};
+
 // Routes that must answer without a Personal Access Token. `skill.md` is
 // how an agent learns the API exists; `signup` is where it asks for the
 // credentials it doesn't have yet — requiring a token on either would be
@@ -92,6 +118,20 @@ export default async function (
 
   // Register Swagger for OpenAPI documentation
   await fastify.register(fastifySwagger, {
+    transform: ({ schema, url, route }) => {
+      if (schema?.hide || schema?.operationId) {
+        return { schema, url };
+      }
+
+      const method = Array.isArray(route?.method)
+        ? route.method[0]
+        : (route?.method ?? 'GET');
+
+      return {
+        schema: { ...schema, operationId: buildOperationId(method, url) },
+        url,
+      };
+    },
     openapi: {
       info: {
         title: 'daily.dev Public API',
