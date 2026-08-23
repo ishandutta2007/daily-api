@@ -27,8 +27,10 @@ const USER_RATE_LIMIT_PER_MINUTE = 60;
 const IP_RATE_LIMIT_PER_MINUTE = 300;
 const PUBLIC_API_BASE_URL = `https://api.daily.dev${PUBLIC_API_PREFIX}`;
 
+// The `.claude-plugin/plugins/...` path is a symlink, and
+// raw.githubusercontent.com does not resolve symlinks.
 const SKILL_MD_URL =
-  'https://raw.githubusercontent.com/dailydotdev/daily/master/.claude-plugin/plugins/daily.dev/skills/daily.dev/SKILL.md';
+  'https://raw.githubusercontent.com/dailydotdev/daily/master/skills/daily.dev/SKILL.md';
 
 // Routes that must answer without a Personal Access Token. `skill.md` is
 // how an agent learns the API exists; `signup` is where it asks for the
