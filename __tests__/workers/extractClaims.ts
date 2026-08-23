@@ -25,6 +25,11 @@ import {
   ClaimCandidateStatus,
   ClaimDirectness,
 } from '../../src/entity/claim/ClaimCandidate';
+import { ClaimEvidenceSourceClass } from '../../src/entity/claim/ClaimEvidence';
+import {
+  LedgerDocument,
+  LedgerDocumentFormat,
+} from '../../src/entity/claim/LedgerDocument';
 import { LedgerEntityKind } from '../../src/entity/claim/LedgerEntity';
 import { PostType } from '../../src/entity/posts/Post';
 import { Source } from '../../src/entity/Source';
@@ -424,6 +429,33 @@ describe('extractClaims worker', () => {
     expect(mockExtractClaims).not.toHaveBeenCalled();
     expect(mockDownload).not.toHaveBeenCalled();
     expect(await con.getRepository(ClaimCandidate).count()).toEqual(1);
+  });
+
+  it('should stand down when the ledger lane already extracted the url', async () => {
+    await con.getRepository(LedgerDocument).save({
+      id: 'ygg-doc-1',
+      sourceId: 'vendor-changelog-1',
+      // The post reports the same document under a messier url below.
+      url: 'https://daily.dev/react-19',
+      title: 'React 19 is out',
+      sourceName: 'Vendor Changelog',
+      sourceClass: ClaimEvidenceSourceClass.VendorChangelog,
+      contentLocation: 'gs://daily-dev-ledger-documents/react-19.md',
+      contentFormat: LedgerDocumentFormat.Markdown,
+      contentHash: 'hash-1',
+      extractedAt: new Date(),
+    });
+
+    await expectSuccessfulTypedBackground<'yggdrasil.v1.content-published'>(
+      worker,
+      contentPublished({
+        url: 'https://www.daily.dev/react-19/?utm_source=rss',
+      }),
+    );
+
+    expect(mockExtractClaims).not.toHaveBeenCalled();
+    expect(mockDownload).not.toHaveBeenCalled();
+    expect(await con.getRepository(ClaimCandidate).count()).toEqual(0);
   });
 
   it('should file nothing when another delivery files while extracting', async () => {

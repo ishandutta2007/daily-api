@@ -1,61 +1,17 @@
-import {
-  ClaimChangeType as ProtoClaimChangeType,
-  ClaimDirectness as ProtoClaimDirectness,
-  ClaimEntityKind as ProtoClaimEntityKind,
-  ContentFormat,
-} from '@dailydotdev/schema';
+import { ContentFormat } from '@dailydotdev/schema';
 import type { TypedWorker } from './worker';
-import { ClaimChangeType } from '../entity/claim/Claim';
-import {
-  ClaimCandidate,
-  ClaimDirectness,
-} from '../entity/claim/ClaimCandidate';
-import { LedgerEntityKind } from '../entity/claim/LedgerEntity';
 import { PostType } from '../entity/posts/Post';
 import { Source } from '../entity/Source';
-import { downloadTextFromUri } from '../common/googleCloud';
-import { isTooGenericToEmit } from '../common/signatureSpecificity';
 import {
-  isEntityPhrase,
-  loadProseEntityNames,
-} from '../common/ledgerEntityNames';
+  extractAndFileClaims,
+  isCoveredByOtherLane,
+  loadFiledStatements,
+} from '../common/claimExtraction';
 import {
   isTwitterSocialType,
   mapTwitterSocialPayload,
 } from '../common/twitterSocial';
-import { getBragiClient } from '../integrations/bragi/clients';
 import type { Data } from './postUpdated/types';
-
-const changeTypeMap: Record<number, ClaimChangeType> = {
-  [ProtoClaimChangeType.BREAKING]: ClaimChangeType.Breaking,
-  [ProtoClaimChangeType.DEPRECATION]: ClaimChangeType.Deprecation,
-  [ProtoClaimChangeType.REMOVAL]: ClaimChangeType.Removal,
-  [ProtoClaimChangeType.RELEASE]: ClaimChangeType.Release,
-  [ProtoClaimChangeType.NEW_CAPABILITY]: ClaimChangeType.NewCapability,
-  [ProtoClaimChangeType.DISPLACEMENT]: ClaimChangeType.Displacement,
-  [ProtoClaimChangeType.CONSENSUS_SHIFT]: ClaimChangeType.ConsensusShift,
-  [ProtoClaimChangeType.GOTCHA]: ClaimChangeType.Gotcha,
-  [ProtoClaimChangeType.SECURITY]: ClaimChangeType.Security,
-  [ProtoClaimChangeType.FIX]: ClaimChangeType.Fix,
-  [ProtoClaimChangeType.PRICING]: ClaimChangeType.Pricing,
-};
-
-const entityKindMap: Record<number, LedgerEntityKind> = {
-  [ProtoClaimEntityKind.PACKAGE]: LedgerEntityKind.Package,
-  [ProtoClaimEntityKind.MODEL]: LedgerEntityKind.Model,
-  [ProtoClaimEntityKind.API]: LedgerEntityKind.Api,
-  [ProtoClaimEntityKind.SPEC]: LedgerEntityKind.Spec,
-  [ProtoClaimEntityKind.SERVICE]: LedgerEntityKind.Service,
-  [ProtoClaimEntityKind.TOOL]: LedgerEntityKind.Tool,
-  [ProtoClaimEntityKind.RUNTIME]: LedgerEntityKind.Runtime,
-  [ProtoClaimEntityKind.OTHER]: LedgerEntityKind.Other,
-};
-
-const directnessMap: Record<number, ClaimDirectness> = {
-  [ProtoClaimDirectness.ANNOUNCEMENT]: ClaimDirectness.Announcement,
-  [ProtoClaimDirectness.REPORT]: ClaimDirectness.Report,
-  [ProtoClaimDirectness.FIRSTHAND]: ClaimDirectness.Firsthand,
-};
 
 // Only articles are cleaned into XML, so requiring one dropped every other type
 // the triage flagged — which is what kept the ledger article-only for its first
@@ -134,15 +90,6 @@ const resolveContentSource = (data: Data): ContentSource | null => {
     : null;
 };
 
-// Bragi emits YYYY-MM or YYYY-MM-DD, and "" when the post does not state it.
-const toDateColumn = (value: string): string | null => {
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    return value;
-  }
-
-  return /^\d{4}-\d{2}$/.test(value) ? `${value}-01` : null;
-};
-
 const worker: TypedWorker<'yggdrasil.v1.content-published'> = {
   subscription: 'api.content-published-extract-claims',
   handler: async ({ data, messageId }, con, logger): Promise<void> => {
@@ -158,161 +105,41 @@ const worker: TypedWorker<'yggdrasil.v1.content-published'> = {
       return;
     }
 
-    // The topic fires on updates too — yggdrasil republishes a post on caption
-    // merges and re-enrichment — and Pub/Sub can redeliver, so extracting on
-    // every message piles up semantic duplicates for the same post. Extraction
-    // is therefore frozen at first sight of a post; re-extracting after the
-    // content changes is an explicit operation over the private ledger routes,
-    // not an implicit side effect of the topic. Checked before the GCS fetch so
-    // repeat deliveries cost nothing. Reads the primary: a replica lag here
-    // would let a redelivery slip through. Selects the statements rather than a
-    // bare existence flag so the same read also seeds the dedupe below.
-    const filed = await con
-      .getRepository(ClaimCandidate)
-      .createQueryBuilder('cc')
-      .select('cc.statement', 'statement')
-      .where('cc."postId" = :postId', { postId })
-      .getRawMany<{ statement: string }>();
+    const target = { postId };
+    // The topic fires on updates and Pub/Sub redelivers, so extraction is
+    // frozen at first sight of a post — re-extracting is an explicit operation
+    // over the private ledger routes. Checked before the GCS fetch so repeat
+    // deliveries cost nothing.
+    const filed = await loadFiledStatements({ con, target });
 
     if (filed.length) {
       return;
     }
 
-    const logDetails = { postId, messageId };
-
-    try {
-      // Passed to bragi verbatim: evidence spans must match the post exactly.
-      const content = contentSource.uri
-        ? await downloadTextFromUri(contentSource.uri)
-        : contentSource.content;
-
-      if (!content) {
-        return;
-      }
-
-      const source = data.source_id
-        ? await con
-            .getRepository(Source)
-            .findOne({ select: ['name'], where: { id: data.source_id } })
-        : null;
-      // `published_date` exists for exactly one job on bragi's side: resolving
-      // the relative expressions a post uses ("last month", "since March",
-      // "today"). Defaulting it to now told the extractor that a 2016 archive
-      // post was published this morning, so every relative expression in it
-      // resolved to this year — the confident wrong date the extraction prompt
-      // calls the most damaging error available to it. Source backfills import
-      // whole archives with `publishedAt` NULL, which is when this fires: 19 of
-      // the 45 sources added on 2026-08-23 carry NULL on every post. An empty
-      // string leaves those expressions unresolved, and an unresolved
-      // expression yields no date rather than a wrong one.
-      const publishedAt = data.published_at
-        ? new Date(data.published_at)
-        : null;
-
-      const bragiClient = getBragiClient();
-      const response = await bragiClient.garmr.execute(() =>
-        bragiClient.instance.extractClaims({
-          postId,
-          title: contentSource.title,
-          contentFormat: contentSource.contentFormat,
-          content,
-          url: data.url,
-          source: source?.name ?? data.source_id ?? '',
-          publishedDate: publishedAt?.toISOString().slice(0, 10) ?? '',
-        }),
-      );
-
-      // Bragi states one fact twice often enough that unfiltered inserts hand
-      // reviewers the same candidate twice, so a statement already filed for
-      // the post, or already taken from this response, files nothing.
-      const statements = new Set(
-        filed.map(({ statement }) => statement.trim()),
-      );
-
-      // Cached for an hour, so this is one query per process rather than one
-      // per post.
-      const proseEntityNames = await loadProseEntityNames(con);
-      const usableSignature = (token: string): boolean =>
-        !isTooGenericToEmit(token) && !isEntityPhrase(token, proseEntityNames);
-
-      const candidates = response.claims.reduce<Partial<ClaimCandidate>[]>(
-        (acc, claim) => {
-          const changeType = changeTypeMap[claim.changeType];
-          const statement = claim.statement.trim();
-
-          if (
-            !changeType ||
-            !claim.entityName ||
-            !statement ||
-            statements.has(statement)
-          ) {
-            return acc;
-          }
-
-          statements.add(statement);
-          acc.push({
-            postId,
-            rawEntityName: claim.entityName,
-            entityAliases: claim.entityAliases,
-            entityKind:
-              entityKindMap[claim.entityKind] ?? LedgerEntityKind.Other,
-            changeType,
-            statement,
-            versionScope: claim.versionScope || null,
-            effectiveDate: toDateColumn(claim.effectiveDate),
-            sunsetDate: toDateColumn(claim.sunsetDate),
-            supersededBy: claim.supersededBy || null,
-            directness:
-              directnessMap[claim.directness] ?? ClaimDirectness.Report,
-            evidence: claim.evidence,
-            // The specificity bar (smith-brain/docs/claim-ledger-review-
-            // playbook.md §13, v5.9): signatures are matched by exact equality,
-            // so a generic token ("name", "GET") accuses every codebase on
-            // earth. Enforced here rather than in bragi so every write path
-            // shares one rule with the statement backfill.
-            affected: claim.affected.filter(usableSignature),
-            superseding: claim.superseding.filter(usableSignature),
-          });
-
-          return acc;
-        },
-        [],
-      );
-
-      if (!candidates.length) {
-        return;
-      }
-
-      // The check above happens a whole extraction before the write, so two
-      // deliveries of the same post can both find the ledger empty, spend a
-      // minute in bragi and file the same claims twice — which production did.
-      // Reading again here shrinks that window to the gap between these two
-      // statements, and the partial unique index behind the insert closes the
-      // rest: a bare ON CONFLICT DO NOTHING drops whichever run loses.
-      const raced = await con
-        .getRepository(ClaimCandidate)
-        .createQueryBuilder('cc')
-        .select('cc.id', 'id')
-        .where('cc."postId" = :postId', { postId })
-        .limit(1)
-        .getRawOne<{ id: string }>();
-
-      if (raced) {
-        logger.debug(logDetails, 'Claims filed by a concurrent extraction');
-        return;
-      }
-
-      await con
-        .createQueryBuilder()
-        .insert()
-        .into(ClaimCandidate)
-        .values(candidates)
-        .orIgnore()
-        .execute();
-    } catch (err) {
-      logger.error({ ...logDetails, err }, 'Failed to extract claims');
-      throw err;
+    if (
+      data.url &&
+      (await isCoveredByOtherLane({ con, target, url: data.url }))
+    ) {
+      return;
     }
+
+    const source = data.source_id
+      ? await con
+          .getRepository(Source)
+          .findOne({ select: ['name'], where: { id: data.source_id } })
+      : null;
+
+    await extractAndFileClaims({
+      con,
+      logger,
+      target,
+      filed: [],
+      ...contentSource,
+      url: data.url,
+      source: source?.name ?? data.source_id ?? '',
+      publishedAt: data.published_at ? new Date(data.published_at) : null,
+      logDetails: { postId, messageId },
+    });
   },
 };
 

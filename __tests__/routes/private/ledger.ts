@@ -27,6 +27,10 @@ import {
   ClaimEvidenceSourceClass,
 } from '../../../src/entity/claim/ClaimEvidence';
 import {
+  LedgerDocument,
+  LedgerDocumentFormat,
+} from '../../../src/entity/claim/LedgerDocument';
+import {
   LedgerEcosystem,
   LedgerEntity,
   LedgerEntityKind,
@@ -67,10 +71,14 @@ beforeEach(async () => {
   await saveFixtures(con, YouTubePost, videoPostsFixture);
 });
 
-const seedCandidate = (postId = postsFixture[0].id as string) =>
+const seedCandidate = (
+  postId: string | null = postsFixture[0].id as string,
+  documentId: string | null = null,
+) =>
   con.getRepository(ClaimCandidate).save({
     id: candidateId,
     postId,
+    documentId,
     rawEntityName: 'Next.js',
     entityAliases: ['nextjs'],
     entityKind: LedgerEntityKind.Package,
@@ -485,6 +493,48 @@ describe('private ledger routes', () => {
       .expect(200);
 
     expect(body.ecosystem).toEqual([LedgerEcosystem.Npm, LedgerEcosystem.Go]);
+  });
+
+  // A candidate from the ledger's own lane has no post to cite: its document
+  // is the evidence.
+  it('should merge a document-backed candidate citing its document', async () => {
+    const documentId = 'ygg-doc-1';
+    await con.getRepository(LedgerDocument).save({
+      id: documentId,
+      sourceId: 'vendor-changelog-1',
+      url: 'https://nextjs.org/changelog',
+      title: 'Next.js changelog',
+      sourceName: 'Next.js Changelog',
+      sourceClass: ClaimEvidenceSourceClass.VendorChangelog,
+      contentLocation: 'gs://daily-dev-ledger-documents/nextjs.md',
+      contentFormat: LedgerDocumentFormat.Markdown,
+      contentHash: 'hash-1',
+      publishedAt: new Date('2026-04-02T00:00:00.000Z'),
+      extractedAt: new Date(),
+    });
+    await seedCandidate(null, documentId);
+
+    const { body } = await request(app.server)
+      .post('/p/ledger/candidates/resolve')
+      .set(serviceHeaders)
+      .send({
+        candidateId,
+        action: 'merge',
+        sourceClass: ClaimEvidenceSourceClass.VendorChangelog,
+      })
+      .expect(200);
+
+    expect(
+      await con.getRepository(ClaimEvidence).findOneBy({
+        claimId: body.claimId,
+      }),
+    ).toMatchObject({
+      postId: null,
+      documentId,
+      url: 'https://nextjs.org/changelog',
+      sourceClass: ClaimEvidenceSourceClass.VendorChangelog,
+      publishedAt: new Date('2026-04-02T00:00:00.000Z'),
+    });
   });
 
   // Most entities are born on this route, not on /entities, so the registry has

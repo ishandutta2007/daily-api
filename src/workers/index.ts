@@ -88,6 +88,7 @@ import feedbackClassify from './feedbackClassify';
 import feedbackUpdatedSlack from './feedbackUpdatedSlack';
 import gearClassify from './gearClassify';
 import extractClaims from './extractClaims';
+import extractLedgerDocumentClaims from './extractLedgerDocumentClaims';
 import generateChannelDigest from './generateChannelDigest';
 import { jobExecuteWorker } from './job/jobExecute';
 import workerJobDeadLetterLog from './workerJobDeadLetterLog';
@@ -186,6 +187,7 @@ export const typedWorkers: BaseTypedWorker<any>[] = [
   feedbackUpdatedSlack,
   gearClassify,
   extractClaims,
+  extractLedgerDocumentClaims,
   generateChannelDigest,
   newHighlightRealTime,
   userDeletionCleanup,

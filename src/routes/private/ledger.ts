@@ -56,6 +56,7 @@ import {
   ClaimCandidateStatus,
 } from '../../entity/claim/ClaimCandidate';
 import { ClaimEvidence } from '../../entity/claim/ClaimEvidence';
+import { LedgerDocument } from '../../entity/claim/LedgerDocument';
 import { LedgerEntity } from '../../entity/claim/LedgerEntity';
 import {
   deriveEcosystems,
@@ -116,37 +117,59 @@ const resolveCandidateEntity = async ({
   return { entity, created: true };
 };
 
-// Any post type can carry a claim, and single table inheritance keeps url and
-// publishedAt on the shared post table, so read them off the base entity
-// instead of narrowing to one post type.
+type EvidenceSource = {
+  url: string | null;
+  slug: string | null;
+  publishedAt: Date | null;
+  createdAt: Date | null;
+  sourceCreatedAt: Date | null;
+};
+
+// What the candidate cites when it is merged. Read off the base post entity
+// rather than one post type, since single table inheritance keeps url and
+// publishedAt there; a document answers the same shape from its own lane.
 const findEvidenceSource = ({
   con,
-  postId,
+  candidate,
 }: {
   con: DataSource | EntityManager;
-  postId: string;
-}) =>
-  con
-    .getRepository(Post)
-    .createQueryBuilder('p')
-    .select('p."url"', 'url')
-    .addSelect('p."slug"', 'slug')
-    .addSelect('p."publishedAt"', 'publishedAt')
-    .addSelect('p."createdAt"', 'createdAt')
-    // Registering a source imports its whole archive at once, so the source's
-    // own age is what tells an archive import apart from a live crawl — the
-    // distinction `evidenceDerivedDate` needs before it will date a claim from
-    // when we crawled the post.
-    .addSelect('s."createdAt"', 'sourceCreatedAt')
-    .innerJoin('source', 's', 's.id = p."sourceId"')
-    .where('p.id = :postId', { postId })
-    .getRawOne<{
-      url: string | null;
-      slug: string;
-      publishedAt: Date | null;
-      createdAt: Date | null;
-      sourceCreatedAt: Date | null;
-    }>();
+  candidate: ClaimCandidate;
+}): Promise<EvidenceSource | undefined> => {
+  if (!candidate.postId) {
+    return (
+      con
+        .getRepository(LedgerDocument)
+        .createQueryBuilder('ld')
+        .select('ld."url"', 'url')
+        .addSelect('NULL', 'slug')
+        .addSelect('ld."publishedAt"', 'publishedAt')
+        // Not ld."createdAt": an opening poll drains the whole feed window, so
+        // a crawl date is no evidence of when the document was published.
+        .addSelect('NULL', 'createdAt')
+        .addSelect('NULL', 'sourceCreatedAt')
+        .where('ld.id = :documentId', { documentId: candidate.documentId })
+        .getRawOne<EvidenceSource>()
+    );
+  }
+
+  return (
+    con
+      .getRepository(Post)
+      .createQueryBuilder('p')
+      .select('p."url"', 'url')
+      .addSelect('p."slug"', 'slug')
+      .addSelect('p."publishedAt"', 'publishedAt')
+      .addSelect('p."createdAt"', 'createdAt')
+      // Registering a source imports its whole archive at once, so the source's
+      // own age is what tells an archive import apart from a live crawl — the
+      // distinction `evidenceDerivedDate` needs before it will date a claim from
+      // when we crawled the post.
+      .addSelect('s."createdAt"', 'sourceCreatedAt')
+      .innerJoin('source', 's', 's.id = p."sourceId"')
+      .where('p.id = :postId', { postId: candidate.postId })
+      .getRawOne<EvidenceSource>()
+  );
+};
 
 // Rows written before urls were normalized keep their trailing slash, so the
 // form the reviewer sends is looked up first and the normalized form only
@@ -491,17 +514,16 @@ export default async (fastify: FastifyInstance): Promise<void> => {
       return res.status(200).send({ success: true });
     }
 
-    // Merging cites the candidate's post as evidence, so it needs a url: the
-    // one the reviewer supplies, the post's own, or the post's permalink for the
-    // post types that carry no url of their own.
-    const source = await findEvidenceSource({ con, postId: candidate.postId });
+    const source = await findEvidenceSource({ con, candidate });
     const citedUrl =
       body.url ??
       source?.url ??
-      (source ? getDiscussionLink(source.slug) : null);
+      (source?.slug ? getDiscussionLink(source.slug) : null);
 
     if (!citedUrl) {
-      return res.status(404).send({ error: 'Claim candidate post not found' });
+      return res
+        .status(404)
+        .send({ error: 'Claim candidate source not found' });
     }
 
     const url = normalizeEvidenceUrl(citedUrl);
@@ -544,6 +566,7 @@ export default async (fastify: FastifyInstance): Promise<void> => {
         .values({
           claimId: targetClaimId,
           postId: candidate.postId,
+          documentId: candidate.documentId,
           url,
           sourceClass: body.sourceClass,
           publishedAt: source?.publishedAt ?? null,

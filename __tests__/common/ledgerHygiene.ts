@@ -16,6 +16,10 @@ import {
   LedgerEntityKind,
 } from '../../src/entity/claim/LedgerEntity';
 import {
+  LedgerDocument,
+  LedgerDocumentFormat,
+} from '../../src/entity/claim/LedgerDocument';
+import {
   ClaimEvidence,
   ClaimEvidenceSourceClass,
 } from '../../src/entity/claim/ClaimEvidence';
@@ -224,6 +228,50 @@ describe('planClaimDatesFromEvidence', () => {
     ).toMatchObject({
       effectiveDate: '2026-05-01',
       dateSource: ClaimDateSource.EvidencePublished,
+    });
+  });
+
+  // A crawl date is not a publication date: onboarding a feed drains whatever
+  // window it exposes, so the first poll crawls entries of every age at once.
+  it('should leave a claim cited only by an undated document undated', async () => {
+    const documentId = 'ygg-doc-1';
+    await con.getRepository(LedgerDocument).save({
+      id: documentId,
+      sourceId: 'vendor-changelog-1',
+      url: 'https://vendor.dev/changelog',
+      title: 'Vendor changelog',
+      sourceName: 'Vendor Changelog',
+      sourceClass: ClaimEvidenceSourceClass.VendorChangelog,
+      contentLocation: 'gs://daily-dev-ledger-documents/vendor.md',
+      contentFormat: LedgerDocumentFormat.Markdown,
+      contentHash: 'hash-1',
+      createdAt: new Date('2026-06-02T00:00:00.000Z'),
+      extractedAt: new Date(),
+    });
+    await saveFixtures(con, Claim, [
+      {
+        id: claimId(11),
+        entityId,
+        changeType: ClaimChangeType.NewCapability,
+        statement: 'Undated, cited by an undated document.',
+        status: ClaimStatus.Candidate,
+      },
+    ]);
+    await saveFixtures(con, ClaimEvidence, [
+      {
+        claimId: claimId(11),
+        documentId,
+        url: 'https://vendor.dev/changelog',
+        sourceClass: ClaimEvidenceSourceClass.VendorChangelog,
+      },
+    ]);
+
+    expect(await dateClaimsFromEvidence(con)).toEqual(0);
+    expect(
+      await con.getRepository(Claim).findOneBy({ id: claimId(11) }),
+    ).toMatchObject({
+      effectiveDate: null,
+      dateSource: null,
     });
   });
 

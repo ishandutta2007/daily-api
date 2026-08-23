@@ -7,6 +7,7 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import type { Claim } from './Claim';
+import type { LedgerDocument } from './LedgerDocument';
 
 export enum ClaimEvidenceSourceClass {
   Community = 'community',
@@ -17,6 +18,7 @@ export enum ClaimEvidenceSourceClass {
 
 @Entity()
 @Index('UQ_claim_evidence_claimId_url', ['claimId', 'url'], { unique: true })
+@Index('IDX_claim_evidence_documentId', ['documentId'])
 export class ClaimEvidence {
   @PrimaryGeneratedColumn('uuid', {
     primaryKeyConstraintName: 'PK_claim_evidence_id',
@@ -29,6 +31,11 @@ export class ClaimEvidence {
   // Soft reference to post.id: evidence survives a post being removed.
   @Column({ type: 'text', nullable: true, default: null })
   postId: string | null;
+
+  // Set instead of postId for the ledger lane; both stay null for a reviewer's
+  // manual citation.
+  @Column({ type: 'text', nullable: true, default: null })
+  documentId: string | null;
 
   @Column({ type: 'text' })
   url: string;
@@ -45,4 +52,15 @@ export class ClaimEvidence {
     foreignKeyConstraintName: 'FK_claim_evidence_claim_id',
   })
   claim: Promise<Claim>;
+
+  @ManyToOne('LedgerDocument', {
+    lazy: true,
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({
+    name: 'documentId',
+    foreignKeyConstraintName: 'FK_claim_evidence_document_id',
+  })
+  document: Promise<LedgerDocument | null>;
 }

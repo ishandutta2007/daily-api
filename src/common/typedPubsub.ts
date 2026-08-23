@@ -35,6 +35,7 @@ import {
   CandidateRejectedOpportunityMessage,
   ContentUpdatedMessage,
   type HighlightsCanonicalPublishedMessage,
+  type LedgerDocumentPublishedMessage,
   MatchedCandidate,
   type OpportunityMessage,
   type OpportunityPreviewResult,
@@ -65,6 +66,9 @@ import type { Data as ContentPublishedData } from '../workers/postUpdated/types'
 export type PubSubSchema = {
   // Published by yggdrasil, never by us.
   'yggdrasil.v1.content-published': ContentPublishedData;
+  // Published by yggdrasil, never by us. The claim ledger's own lane: sources
+  // scraped for extraction alone, whose documents never become posts.
+  'yggdrasil.v1.ledger-document-published': LedgerDocumentPublishedMessage;
   'pub-request': {
     reason: NotificationReason;
     sourceRequest: ChangeObject<SourceRequest>;

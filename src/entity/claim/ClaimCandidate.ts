@@ -7,6 +7,7 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import type { Claim, ClaimChangeType } from './Claim';
+import type { LedgerDocument } from './LedgerDocument';
 import type { LedgerEntityKind } from './LedgerEntity';
 
 export enum ClaimDirectness {
@@ -27,6 +28,11 @@ export enum ClaimCandidateStatus {
 // Partial on the migration's cutover so the duplicates already filed by
 // redelivered extractions stay untouched — see the migration for the shape.
 @Index('IDX_claim_candidate_postId_statement_unique', { synchronize: false })
+// Separate from the post index rather than one over both columns: a null never
+// equals a null in a btree.
+@Index('IDX_claim_candidate_documentId_statement_unique', {
+  synchronize: false,
+})
 export class ClaimCandidate {
   @PrimaryGeneratedColumn('uuid', {
     primaryKeyConstraintName: 'PK_claim_candidate_id',
@@ -36,8 +42,12 @@ export class ClaimCandidate {
   @Column({ default: () => 'now()' })
   createdAt: Date;
 
-  @Column({ type: 'text' })
-  postId: string;
+  // Soft reference to post.id: the candidate outlives the post.
+  @Column({ type: 'text', nullable: true, default: null })
+  postId: string | null;
+
+  @Column({ type: 'text', nullable: true, default: null })
+  documentId: string | null;
 
   @Column({ type: 'text' })
   rawEntityName: string;
@@ -97,4 +107,15 @@ export class ClaimCandidate {
     foreignKeyConstraintName: 'FK_claim_candidate_claim_id',
   })
   claim: Promise<Claim | null>;
+
+  @ManyToOne('LedgerDocument', {
+    lazy: true,
+    nullable: true,
+    onDelete: 'CASCADE',
+  })
+  @JoinColumn({
+    name: 'documentId',
+    foreignKeyConstraintName: 'FK_claim_candidate_document_id',
+  })
+  document: Promise<LedgerDocument | null>;
 }

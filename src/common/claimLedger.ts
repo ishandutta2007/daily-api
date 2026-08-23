@@ -74,6 +74,63 @@ const isArchiveImport = ({
   !!sourceCreatedAt &&
   createdAt.getTime() - sourceCreatedAt.getTime() < ARCHIVE_IMPORT_WINDOW_MS;
 
+// Params that name a syndication channel rather than a document.
+const TRACKING_PARAM_PREFIXES = ['utm_', 'ref_', 'mc_', 'mkt_', 'pk_'];
+const TRACKING_PARAMS = new Set([
+  'ref',
+  'source',
+  'fbclid',
+  'gclid',
+  'gbraid',
+  'wbraid',
+  'igshid',
+  'mkt_tok',
+  'at_medium',
+]);
+
+const isTrackingParam = (key: string): boolean => {
+  const name = key.toLowerCase();
+
+  return (
+    TRACKING_PARAMS.has(name) ||
+    TRACKING_PARAM_PREFIXES.some((prefix) => name.startsWith(prefix))
+  );
+};
+
+// The ledger's cross-lane identity key: a feed hands us the same document as a
+// post does, wearing `?utm_source=rss`, a `www.` host or plain http. Stricter
+// than `normalizeEvidenceUrl` and separate from it, because that one's output
+// is already persisted in `claim_evidence.url`.
+export const canonicalDocumentUrl = (url: string): string => {
+  const trimmed = url.trim();
+
+  try {
+    const parsed = new URL(trimmed);
+
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return trimmed;
+    }
+
+    parsed.protocol = 'https:';
+    parsed.hostname = parsed.hostname.replace(/^www\./, '');
+    parsed.username = '';
+    parsed.password = '';
+    // A fragment addresses a section of a document, not another document.
+    parsed.hash = '';
+    parsed.pathname = parsed.pathname.replace(/\/+$/, '') || '/';
+
+    const params = [...parsed.searchParams.entries()]
+      .filter(([key]) => !isTrackingParam(key))
+      .sort(([a], [b]) => (a < b ? -1 : 1));
+
+    parsed.search = params.length ? new URLSearchParams(params).toString() : '';
+
+    return parsed.toString();
+  } catch {
+    return trimmed;
+  }
+};
+
 const MAX_HIERARCHY_DEPTH = 5;
 
 // Evidence dedupes on (claimId, url), so one source filed once with a trailing
