@@ -20,9 +20,13 @@ type Con = DataSource | EntityManager;
 //     already `corroborated`. `verified` is a property of the REVIEW PERFORMED
 //     (playbook §2) and no amount of evidence can earn it — law 1, "corroboration
 //     counts NEVER promote to verified".
-//  2. `sourceClass` is NOT AN INPUT to the default verdict. See VENDOR CROSS-CLASS
-//     below; this is law 3 ("sourceClass upgrades never promote") made structural
-//     rather than remembered.
+//  2. `sourceClass` can never PROMOTE. It is read in exactly one place and in
+//     exactly one direction: `registry` rows are DROPPED before counting (see
+//     PROVENANCE ROWS below), so relabelling a row can only ever cost a claim
+//     corroboration, never earn it. That is law 3 ("sourceClass upgrades never
+//     promote") made structural rather than remembered — the same guarantee the
+//     original "not an input at all" reading gave, minus the false promotions it
+//     could not see.
 //  3. It is idempotent. A promoted claim is no longer `candidate`, so a second
 //     run selects nothing; the verdict itself is a pure function of the evidence.
 //
@@ -48,6 +52,40 @@ type Con = DataSource | EntityManager;
 //   - The distinct-POSTS test needs the RT carve-out bolted on precisely because
 //     it counts mirrors as sources. Publishers subsume that carve-out for free:
 //     every retweet already resolves to one x.com.
+//
+// PROVENANCE ROWS DO NOT CORROBORATE
+//
+// A registry page attests that a version EXISTS and when it shipped. It does not
+// attest the behavioural fact in the claim's statement — hex.pm knows composite
+// 0.7.0 was published on 2026-08-22, it does not know that 0.7.0 raised its
+// minimum Elixir version. Counting it as a publisher is therefore not a
+// corroboration at all; it is provenance wearing a second domain name.
+//
+// This was not theoretical. Playbook R15a instructs the operator, on resolving a
+// survivor's `versionScope` to a ship date, to SET `effectiveDate` and record the
+// registry read via `POST /claims/evidence`. Under the pre-existing rule that
+// audit row was also a second registrable domain, so obeying R15a on a
+// single-sourced package release silently promoted it: one Medium post by the
+// package author + packagist.org = `corroborated`. Every R15a date resolution on
+// a single-sourced release has that shape, and nothing downstream could see it —
+// this cron never demotes and the plan-reviewer floors at `corroborated`. The
+// operator caught it by withholding the evidence rows and escalating
+// (#rot-bench, 2026-08-22), which cost the audit trail R15a exists to create.
+//
+// So: a `registry` row published by a PACKAGE REGISTRY is dropped before the
+// publisher count, and the operator writes the evidence row. The ledger keeps
+// the provenance and does not mistake it for a second opinion.
+//
+// COST, measured rather than assumed: over the whole prod pile there are 11
+// `registry` evidence rows on 11 claims; 3 sit on a package-registry host, and
+// ZERO claims at any status depend on one to reach two publishers. Today this
+// promotes nobody and demotes nobody; it is a guard on the rows R15a is about to
+// start writing.
+//
+// The recall it forgoes is a package-registry page that genuinely attests the
+// statement (a yanked crate, a deprecation flag). That path is not closed, it is
+// just not automatic: a human who READS that page promotes it under R12, which
+// is what `verified` means.
 //
 // VENDOR CROSS-CLASS, available and off
 //
@@ -76,11 +114,43 @@ type Con = DataSource | EntityManager;
 // independent publishers is corroborated, and whether a consumer wants it is the
 // serving query's `since` filter to decide.
 
+// PACKAGE registries: the hosts whose pages answer "does this version exist and
+// when was it published" and nothing else. A `registry` row on one of these is
+// dropped before the publisher count; see PROVENANCE ROWS.
+//
+// A HOST LIST and not the whole `registry` class, because reading how the class
+// is actually used in prod settles it: of 11 registry rows, 8 are nvd.nist.gov,
+// cvedetails.com, rubysec.com and huggingface.co. An NVD page is not provenance
+// — it attests the vulnerability, its severity and its affected range, which IS
+// the fact a security claim states. Dropping those would cost real corroboration
+// to fix a package-release problem they have no part in.
+//
+// The vocabulary is the ten ecosystems of playbook E12 (`ClaimEntity.ecosystem`),
+// one entry per registry that can attest a release. `github.com` is deliberately
+// absent even though 2 rows carry `registry:github.com`: a release page there is
+// the vendor's own notes, which do attest behaviour.
+const PACKAGE_REGISTRY_PUBLISHERS: ReadonlySet<string> = new Set([
+  'npmjs.org', // npm
+  'pypi.org', // pypi
+  'rubygems.org', // rubygems
+  'golang.org', // go — proxy.golang.org
+  'go.dev', // go — pkg.go.dev
+  'crates.io', // crates
+  'maven.org', // maven — search.maven.org, repo1.maven.org
+  'mvnrepository.com', // maven
+  'packagist.org', // packagist — also repo.packagist.org
+  'hex.pm', // hex
+  'nuget.org', // nuget
+  'pub.dev', // pub
+]);
+
 // The classes that speak for the thing itself rather than about it. Used only by
-// the off-by-default branch below.
+// the off-by-default branch below. `Registry` is deliberately NOT here: a
+// package-registry row is already gone by the time this is consulted, and
+// listing the class would let the opt-in branch re-open the exact hole the drop
+// closes — for every registry row, not just the substantive ones.
 const OFFICIAL_SOURCE_CLASSES: ReadonlySet<string> = new Set([
   ClaimEvidenceSourceClass.VendorChangelog,
-  ClaimEvidenceSourceClass.Registry,
 ]);
 
 export type CorroborationEvidence = {
@@ -93,6 +163,24 @@ export type CorroborationReason =
   | 'vendor_cross_class'
   | 'single_publisher'
   | 'no_independent_evidence';
+
+// A row that attests provenance only: a `registry` row published by a package
+// registry. Both halves are required — the class alone sweeps in NVD, and the
+// host alone would drop a genuine article that happens to live on a registry
+// domain. Kept as a named predicate so the one place `sourceClass` is read in
+// the default path is greppable.
+const isProvenanceOnly = ({
+  url,
+  sourceClass,
+}: CorroborationEvidence): boolean => {
+  if (sourceClass !== ClaimEvidenceSourceClass.Registry) {
+    return false;
+  }
+
+  const publisher = evidencePublisher(url);
+
+  return !!publisher && PACKAGE_REGISTRY_PUBLISHERS.has(publisher);
+};
 
 export type CorroborationVerdict = {
   corroborated: boolean;
@@ -107,7 +195,10 @@ export const corroborationVerdict = (
   evidence: CorroborationEvidence[],
   { allowVendorCrossClass = false }: { allowVendorCrossClass?: boolean } = {},
 ): CorroborationVerdict => {
-  const publishers = distinctPublishers(evidence.map(({ url }) => url));
+  // The only read of `sourceClass` in the default path, and it is subtractive:
+  // dropping rows can move a verdict from corroborated to not, never the reverse.
+  const attesting = evidence.filter((row) => !isProvenanceOnly(row));
+  const publishers = distinctPublishers(attesting.map(({ url }) => url));
 
   if (publishers.length >= 2) {
     return { corroborated: true, reason: 'distinct_publishers', publishers };
@@ -117,7 +208,7 @@ export const corroborationVerdict = (
   // are already gone from `publishers`, but they must also not prop up the
   // cross-class branch: a vendor changelog corroborated by a daily.dev
   // Collection is the self-citation the exclusion exists to stop.
-  const independent = evidence.filter(({ url }) => evidencePublisher(url));
+  const independent = attesting.filter(({ url }) => evidencePublisher(url));
 
   if (allowVendorCrossClass && publishers.length === 1) {
     const official = independent.filter(({ sourceClass }) =>

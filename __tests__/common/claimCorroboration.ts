@@ -13,6 +13,10 @@ const vendor = (url: string) => ({
   url,
   sourceClass: ClaimEvidenceSourceClass.VendorChangelog,
 });
+const registry = (url: string) => ({
+  url,
+  sourceClass: ClaimEvidenceSourceClass.Registry,
+});
 
 describe('evidencePublisher', () => {
   it('should identify a publisher by registrable domain, not hostname', () => {
@@ -193,6 +197,152 @@ describe('corroborationVerdict', () => {
     expect(
       corroborationVerdict([vendor(urls[0]), community(urls[1])]),
     ).toMatchObject({ corroborated: false });
+  });
+
+  describe('provenance rows', () => {
+    it('should NOT corroborate a single source plus the R15a registry read', () => {
+      // The escalated shape: one Medium post by the package author, plus the
+      // packagist.org page R15a requires be recorded when the ship date is read
+      // off it. Two domains, one opinion — packagist knows v4.1.0 exists, not
+      // that syncPermissions() became variadic.
+      expect(
+        corroborationVerdict([
+          community('https://medium.com/@sebarca0/migrating-from-spatie'),
+          registry(
+            'https://packagist.org/packages/scabarcas/laravel-permissions-redis',
+          ),
+        ]),
+      ).toMatchObject({
+        corroborated: false,
+        reason: 'single_publisher',
+        publishers: ['medium.com'],
+      });
+    });
+
+    it('should NOT corroborate a GitHub release plus its hex.pm registry row', () => {
+      expect(
+        corroborationVerdict([
+          vendor('https://github.com/fuelen/composite/releases/tag/v0.7.0'),
+          registry('https://hex.pm/packages/composite/0.7.0'),
+        ]),
+      ).toMatchObject({
+        corroborated: false,
+        reason: 'single_publisher',
+        publishers: ['github.com'],
+      });
+    });
+
+    it('should report no independent evidence when only a registry row exists', () => {
+      expect(
+        corroborationVerdict([registry('https://hex.pm/packages/composite')]),
+      ).toMatchObject({
+        corroborated: false,
+        reason: 'no_independent_evidence',
+        publishers: [],
+      });
+    });
+
+    it('should still corroborate two real publishers when a registry row rides along', () => {
+      // The drop is surgical: it removes the provenance row, not the claim.
+      expect(
+        corroborationVerdict([
+          community('https://techcrunch.com/2026/08/19/laravel'),
+          community('https://medium.com/@sebarca0/migrating-from-spatie'),
+          registry(
+            'https://packagist.org/packages/scabarcas/laravel-permissions-redis',
+          ),
+        ]),
+      ).toMatchObject({ corroborated: true, reason: 'distinct_publishers' });
+    });
+
+    it('should let a relabel to registry only ever demote, never promote', () => {
+      // Law 3 restated for the one direction sourceClass is now read in.
+      const rows = [
+        'https://medium.com/@sebarca0/a',
+        'https://packagist.org/packages/scabarcas/laravel-permissions-redis',
+      ] as const;
+
+      expect(
+        corroborationVerdict([community(rows[0]), community(rows[1])]),
+      ).toMatchObject({ corroborated: true });
+      expect(
+        corroborationVerdict([community(rows[0]), registry(rows[1])]),
+      ).toMatchObject({ corroborated: false });
+    });
+
+    it('should still corroborate a news report plus its NVD entry', () => {
+      // The drop is package registries only, and this is why: `registry` in prod
+      // is mostly nvd.nist.gov and cvedetails.com, and an NVD page attests the
+      // vulnerability, its severity and its affected range — the very fact the
+      // claim states. That is not provenance.
+      expect(
+        corroborationVerdict([
+          community('https://thehackernews.com/2026/08/cve'),
+          registry('https://nvd.nist.gov/vuln/detail/CVE-2026-1234'),
+        ]),
+      ).toMatchObject({ corroborated: true, reason: 'distinct_publishers' });
+    });
+
+    it('should still corroborate a post plus a github release labelled registry', () => {
+      // 2 prod rows carry `registry:github.com`. A release page is the vendor's
+      // own notes; it attests behaviour, so github.com is not on the host list.
+      expect(
+        corroborationVerdict([
+          community('https://phpunit.expert/post'),
+          registry(
+            'https://github.com/sebastianbergmann/phpunit/releases/tag/12.0.0',
+          ),
+        ]),
+      ).toMatchObject({ corroborated: true, reason: 'distinct_publishers' });
+    });
+
+    it('should drop a package registry named by any of its hosts', () => {
+      // Registrable domain, so the subdomain each registry actually serves from
+      // resolves onto the same entry: registry.npmjs.org, repo.packagist.org.
+      expect(
+        corroborationVerdict([
+          community('https://medium.com/@a/post'),
+          registry('https://registry.npmjs.org/left-pad'),
+        ]),
+      ).toMatchObject({ corroborated: false, reason: 'single_publisher' });
+      expect(
+        corroborationVerdict([
+          community('https://medium.com/@a/post'),
+          registry('https://pkg.go.dev/golang.org/x/tools'),
+        ]),
+      ).toMatchObject({ corroborated: false, reason: 'single_publisher' });
+    });
+
+    it('should not drop a package registry row mislabelled community', () => {
+      // Both halves are required. A registry url a reviewer typed as `community`
+      // still counts — the fix is the label, not a host-only rule that would also
+      // swallow a genuine article hosted on a registry domain.
+      expect(
+        corroborationVerdict([
+          community('https://medium.com/@a/post'),
+          community(
+            'https://packagist.org/packages/scabarcas/laravel-permissions-redis',
+          ),
+        ]),
+      ).toMatchObject({ corroborated: true, reason: 'distinct_publishers' });
+    });
+
+    it('should not let the opt-in branch resurrect a dropped registry row', () => {
+      // `Registry` was removed from OFFICIAL_SOURCE_CLASSES for this reason: with
+      // the old membership, enabling the branch would have promoted exactly the
+      // pair the drop exists to stop.
+      expect(
+        corroborationVerdict(
+          [
+            community('https://medium.com/@sebarca0/a'),
+            registry(
+              'https://packagist.org/packages/scabarcas/laravel-permissions-redis',
+            ),
+          ],
+          { allowVendorCrossClass: true },
+        ),
+      ).toMatchObject({ corroborated: false, reason: 'single_publisher' });
+    });
   });
 
   describe('vendor cross-class branch (opt-in)', () => {
