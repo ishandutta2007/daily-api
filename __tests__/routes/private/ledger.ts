@@ -907,6 +907,11 @@ describe('private ledger routes', () => {
   });
 
   it('should fall back to the post crawl date when the post carries no publishedAt', async () => {
+    // A source registered long before the post was crawled means the post
+    // arrived on the live feed, so the crawl date is a tight upper bound.
+    await con
+      .getRepository(Source)
+      .update('a', { createdAt: new Date('2024-01-01T00:00:00.000Z') });
     await con
       .getRepository(ArticlePost)
       .update(postsFixture[0].id as string, { publishedAt: null });
@@ -927,6 +932,30 @@ describe('private ledger routes', () => {
 
     expect(claim?.dateSource).toEqual(ClaimDateSource.EvidenceCrawled);
     expect(claim?.effectiveDate).not.toBeNull();
+  });
+
+  it('should leave a claim undated when the post arrived in its source archive import', async () => {
+    // Registering a source imports its whole archive in one sweep, so the day
+    // we crawled a post says nothing about the day it was published — and
+    // stamping it with today would walk a decade-old fact straight through M1.
+    await con.getRepository(Source).update('a', { createdAt: new Date() });
+    await con
+      .getRepository(ArticlePost)
+      .update(postsFixture[0].id as string, { publishedAt: null });
+    await seedCandidate();
+    await con
+      .getRepository(ClaimCandidate)
+      .update(candidateId, { effectiveDate: null });
+
+    const { body } = await request(app.server)
+      .post('/p/ledger/candidates/resolve')
+      .set(serviceHeaders)
+      .send({ candidateId, action: 'merge' })
+      .expect(200);
+
+    expect(
+      await con.getRepository(Claim).findOneBy({ id: body.claimId }),
+    ).toMatchObject({ effectiveDate: null, dateSource: null });
   });
 
   it('should leave a pre-release claim undated rather than dating it from the post that reports it', async () => {

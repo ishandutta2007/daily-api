@@ -2,6 +2,14 @@ import type { DataSource, EntityManager } from 'typeorm';
 import { ConflictError } from '../errors';
 import { LedgerEntity } from '../entity/claim/LedgerEntity';
 import { ClaimDateSource } from '../entity/claim/Claim';
+import { ONE_DAY_IN_SECONDS } from './constants';
+
+// A post that arrived within this of its source being registered came in that
+// source's opening archive sweep, so the day we crawled it says nothing about
+// the day it was published. Deliberately generous: the 2026-08-23 imports each
+// drained inside ninety seconds, and the only thing a wide window costs is
+// leaving the first day of a new source's genuinely fresh posts undated.
+const ARCHIVE_IMPORT_WINDOW_MS = ONE_DAY_IN_SECONDS * 1000;
 
 // The date a claim gets when extraction did not state one, derived from the
 // post that reports it. Both fallbacks are an UPPER BOUND — a post published in
@@ -17,6 +25,7 @@ export const evidenceDerivedDate = (
   source: {
     publishedAt?: Date | null;
     createdAt?: Date | null;
+    sourceCreatedAt?: Date | null;
   } | null,
 ): { effectiveDate: string; dateSource: ClaimDateSource } | null => {
   // `effectiveDate` is a DATE column, so the timestamp is truncated to the day
@@ -30,7 +39,21 @@ export const evidenceDerivedDate = (
     };
   }
 
-  if (source?.createdAt) {
+  // The crawl date is only an upper bound worth recording when the crawl was
+  // near the publication, and the one case where it plainly was not is a source
+  // backfill: registering a source imports its whole archive at once, so a 2013
+  // post and a 2026 post are both crawled this morning. Measured on prod
+  // 2026-08-23 — of 12,468 claims dated this way, 91.4% carry exactly the crawl
+  // date, and EVERY claim on a pre-2025 article is wrong by the article's own
+  // age (2022 articles drift four years).
+  //
+  // The direction is what makes it worse than an ordinary imprecision. M1 denies
+  // a candidate whose `effectiveDate` is older than 24 months, so a decade-old
+  // fact stamped with today's date does not merely arrive misdated — it walks
+  // straight through the staleness bar that exists to catch it and enters the
+  // ledger reading as current. An undated claim is the honest outcome here
+  // (playbook §10), and it leaves the row visible to the review lane instead.
+  if (source?.createdAt && !isArchiveImport(source)) {
     return {
       effectiveDate: asDate(source.createdAt),
       dateSource: ClaimDateSource.EvidenceCrawled,
@@ -39,6 +62,17 @@ export const evidenceDerivedDate = (
 
   return null;
 };
+
+const isArchiveImport = ({
+  createdAt,
+  sourceCreatedAt,
+}: {
+  createdAt?: Date | null;
+  sourceCreatedAt?: Date | null;
+}): boolean =>
+  !!createdAt &&
+  !!sourceCreatedAt &&
+  createdAt.getTime() - sourceCreatedAt.getTime() < ARCHIVE_IMPORT_WINDOW_MS;
 
 const MAX_HIERARCHY_DEPTH = 5;
 

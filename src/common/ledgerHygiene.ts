@@ -50,8 +50,15 @@ export const planClaimDatesFromEvidence = async (
     .select('c.id', 'id')
     .addSelect('MIN(COALESCE(e."publishedAt", p."publishedAt"))', 'publishedAt')
     .addSelect('MIN(p."createdAt")', 'createdAt')
+    // Paired with the crawl date above so `evidenceDerivedDate` can tell a
+    // source's opening archive sweep from a live crawl. MAX, because the two
+    // MINs pick the earliest-crawled evidence post: pairing it with the LATEST
+    // source registration is the reading that keeps a backfilled post looking
+    // like one.
+    .addSelect('MAX(s."createdAt")', 'sourceCreatedAt')
     .innerJoin('claim_evidence', 'e', 'e."claimId" = c.id')
     .leftJoin('post', 'p', 'p.id = e."postId"')
+    .leftJoin('source', 's', 's.id = p."sourceId"')
     .where('c."effectiveDate" IS NULL')
     .andWhere('c.status IN (:...statuses)', { statuses: CONSUMABLE_STATUSES })
     .andWhere(
@@ -63,6 +70,7 @@ export const planClaimDatesFromEvidence = async (
       id: string;
       publishedAt: Date | null;
       createdAt: Date | null;
+      sourceCreatedAt: Date | null;
     }>();
 
   // Evidence dates cluster hard, so one UPDATE per distinct (date, source)

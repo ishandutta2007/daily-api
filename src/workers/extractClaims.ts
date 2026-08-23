@@ -195,9 +195,19 @@ const worker: TypedWorker<'yggdrasil.v1.content-published'> = {
             .getRepository(Source)
             .findOne({ select: ['name'], where: { id: data.source_id } })
         : null;
+      // `published_date` exists for exactly one job on bragi's side: resolving
+      // the relative expressions a post uses ("last month", "since March",
+      // "today"). Defaulting it to now told the extractor that a 2016 archive
+      // post was published this morning, so every relative expression in it
+      // resolved to this year — the confident wrong date the extraction prompt
+      // calls the most damaging error available to it. Source backfills import
+      // whole archives with `publishedAt` NULL, which is when this fires: 19 of
+      // the 45 sources added on 2026-08-23 carry NULL on every post. An empty
+      // string leaves those expressions unresolved, and an unresolved
+      // expression yields no date rather than a wrong one.
       const publishedAt = data.published_at
         ? new Date(data.published_at)
-        : new Date();
+        : null;
 
       const bragiClient = getBragiClient();
       const response = await bragiClient.garmr.execute(() =>
@@ -208,7 +218,7 @@ const worker: TypedWorker<'yggdrasil.v1.content-published'> = {
           content,
           url: data.url,
           source: source?.name ?? data.source_id ?? '',
-          publishedDate: publishedAt.toISOString().slice(0, 10),
+          publishedDate: publishedAt?.toISOString().slice(0, 10) ?? '',
         }),
       );
 

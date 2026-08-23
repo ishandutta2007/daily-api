@@ -133,12 +133,19 @@ const findEvidenceSource = ({
     .addSelect('p."slug"', 'slug')
     .addSelect('p."publishedAt"', 'publishedAt')
     .addSelect('p."createdAt"', 'createdAt')
+    // Registering a source imports its whole archive at once, so the source's
+    // own age is what tells an archive import apart from a live crawl — the
+    // distinction `evidenceDerivedDate` needs before it will date a claim from
+    // when we crawled the post.
+    .addSelect('s."createdAt"', 'sourceCreatedAt')
+    .innerJoin('source', 's', 's.id = p."sourceId"')
     .where('p.id = :postId', { postId })
     .getRawOne<{
       url: string | null;
       slug: string;
       publishedAt: Date | null;
       createdAt: Date | null;
+      sourceCreatedAt: Date | null;
     }>();
 
 // Rows written before urls were normalized keep their trailing slash, so the
@@ -301,7 +308,11 @@ const createClaimFromCandidate = async ({
   manager: EntityManager;
   candidate: ClaimCandidate;
   body: z.infer<typeof claimCandidateResolveSchema>;
-  source: { publishedAt: Date | null; createdAt: Date | null } | null;
+  source: {
+    publishedAt: Date | null;
+    createdAt: Date | null;
+    sourceCreatedAt: Date | null;
+  } | null;
   evidenceUrl: string | null;
 }): Promise<{ claimId: string; entityId: string; entityCreated: boolean }> => {
   // An explicit entityId settles what the raw names cannot: a claim about a

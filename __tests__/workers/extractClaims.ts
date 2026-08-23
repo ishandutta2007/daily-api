@@ -220,6 +220,24 @@ describe('extractClaims worker', () => {
     ).toMatchObject({ changeType: ClaimChangeType.Pricing });
   });
 
+  it('should send no published date when the payload carries none', async () => {
+    mockExtractClaims.mockResolvedValue(
+      new ExtractClaimsResponse({ id: 'op-1', model: 'test', claims: [] }),
+    );
+
+    await expectSuccessfulTypedBackground<'yggdrasil.v1.content-published'>(
+      worker,
+      contentPublished({ published_at: undefined }),
+    );
+
+    // Today's date here would tell the extractor a decade-old archive post was
+    // published this morning, and every relative expression in it would resolve
+    // to this year.
+    expect(mockExtractClaims).toHaveBeenCalledWith(
+      expect.objectContaining({ publishedDate: '' }),
+    );
+  });
+
   it('should file one candidate when the response states the same fact twice', async () => {
     const duplicated = {
       entityName: 'react',
