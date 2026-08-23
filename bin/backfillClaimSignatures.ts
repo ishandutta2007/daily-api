@@ -6,6 +6,7 @@ import { AnthropicClient } from '../src/integrations/anthropic';
 import {
   SIGNABLE_CHANGE_TYPES,
   extractClaimSignatures,
+  type ClaimSignatures,
 } from '../src/common/claimSignatures';
 import { loadProseEntityNames } from '../src/common/ledgerEntityNames';
 
@@ -88,15 +89,15 @@ const arg = (name: string): string | undefined =>
 
   let processed = 0;
   let withTokens = 0;
+  // Claims that named a symbol the bar refused outright. Counted apart from
+  // "no tokens" because they are the opposite fact: a code surface that could
+  // not be expressed, rather than a claim that has none.
+  let withheld = 0;
   let failed = 0;
 
   for (let i = 0; i < pending.length; i += BATCH_SIZE) {
     const batch = pending.slice(i, i + BATCH_SIZE);
-    const results: {
-      id: string;
-      affected: string[];
-      superseding: string[];
-    }[] = [];
+    const results: ({ id: string } & ClaimSignatures)[] = [];
 
     for (let j = 0; j < batch.length; j += CONCURRENCY) {
       const slice = batch.slice(j, j + CONCURRENCY);
@@ -146,25 +147,34 @@ const arg = (name: string): string | undefined =>
       const found = results.filter(
         (r) => r.affected.length + r.superseding.length,
       ).length;
+      const refused = results.filter((r) => r.signatureWithheld).length;
       console.log(
-        `dry run: ${results.length} claims, ${found} would get tokens, ${failed} failed`,
+        `dry run: ${results.length} claims, ${found} would get tokens, ${refused} withheld (symbol-level, no usable token), ${failed} failed`,
       );
       process.exit(0);
     }
 
     // Stamped in the same statement that writes the tokens, so a crash between
     // the two is not possible and a resumed run never double-charges a claim.
+    //
+    // `signatureWithheld` is written here rather than left to a later pass for
+    // the same reason: this run is the only moment anything knows WHAT the
+    // claim proposed. Once the row is stamped with an empty array the proposal
+    // is gone, and no reader can tell a refused symbol from no symbol at all.
     await con.transaction(async (manager) => {
       const stampedAt = new Date();
 
       await Promise.all(
-        results.map(({ id, affected, superseding }) =>
-          manager
-            .getRepository(Claim)
-            .update(
-              { id },
-              { affected, superseding, signaturesBackfilledAt: stampedAt },
-            ),
+        results.map(({ id, affected, superseding, signatureWithheld }) =>
+          manager.getRepository(Claim).update(
+            { id },
+            {
+              affected,
+              superseding,
+              signatureWithheld,
+              signaturesBackfilledAt: stampedAt,
+            },
+          ),
         ),
       );
     });
@@ -173,13 +183,14 @@ const arg = (name: string): string | undefined =>
     withTokens += results.filter(
       ({ affected, superseding }) => affected.length + superseding.length,
     ).length;
+    withheld += results.filter((result) => result.signatureWithheld).length;
     console.log(
-      `${processed}/${pending.length} stamped, ${withTokens} carry tokens, ${failed} failed`,
+      `${processed}/${pending.length} stamped, ${withTokens} carry tokens, ${withheld} withheld, ${failed} failed`,
     );
   }
 
   console.log(
-    `done: ${processed} stamped, ${withTokens} with tokens, ${failed} left unstamped for a re-run`,
+    `done: ${processed} stamped, ${withTokens} with tokens, ${withheld} withheld, ${failed} left unstamped for a re-run`,
   );
   process.exit(0);
 })();

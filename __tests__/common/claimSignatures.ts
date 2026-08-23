@@ -52,6 +52,7 @@ describe('extractClaimSignatures', () => {
     ).resolves.toEqual({
       affected: ['forms.URLField', 'FORMS_URLFIELD_ASSUME_HTTPS'],
       superseding: [],
+      signatureWithheld: false,
     });
   });
 
@@ -94,7 +95,11 @@ describe('extractClaimSignatures', () => {
         { affected: ['#klass', 'forms.URLField'], superseding: ['#klass'] },
         'The #klass helper and forms.URLField both changed.',
       ),
-    ).resolves.toEqual({ affected: ['forms.URLField'], superseding: [] });
+    ).resolves.toEqual({
+      affected: ['forms.URLField'],
+      superseding: [],
+      signatureWithheld: false,
+    });
   });
 
   it('should drop a token too generic to identify the API on its own', async () => {
@@ -111,7 +116,11 @@ describe('extractClaimSignatures', () => {
         },
         'GET requests with a name or user.name of application/json break forms.URLField.',
       ),
-    ).resolves.toEqual({ affected: ['forms.URLField'], superseding: [] });
+    ).resolves.toEqual({
+      affected: ['forms.URLField'],
+      superseding: [],
+      signatureWithheld: false,
+    });
   });
 
   it('should keep a bare package name, which the detector gates at match time instead', async () => {
@@ -120,14 +129,29 @@ describe('extractClaimSignatures', () => {
         { affected: ['axios'], superseding: [] },
         'A typosquat of axios steals credentials on install.',
       ),
-    ).resolves.toEqual({ affected: ['axios'], superseding: [] });
+    ).resolves.toEqual({
+      affected: ['axios'],
+      superseding: [],
+      signatureWithheld: false,
+    });
   });
 
   it('should survive a response that carries no usable input', async () => {
-    await expect(run({})).resolves.toEqual({ affected: [], superseding: [] });
+    // Nothing was proposed, so nothing was withheld: an empty array here is
+    // the honest "no code surface", which is the state the flag exists to tell
+    // apart from a refusal.
+    await expect(run({})).resolves.toEqual({
+      affected: [],
+      superseding: [],
+      signatureWithheld: false,
+    });
     await expect(
       run({ affected: 'not-an-array', superseding: [42, '', '   '] }),
-    ).resolves.toEqual({ affected: [], superseding: [] });
+    ).resolves.toEqual({
+      affected: [],
+      superseding: [],
+      signatureWithheld: false,
+    });
   });
 
   it('should drop a multi-word technology name while keeping a single-word one', async () => {
@@ -159,6 +183,7 @@ describe('extractClaimSignatures', () => {
     ).resolves.toEqual({
       affected: ['images.domains'],
       superseding: ['images.remotePatterns'],
+      signatureWithheld: false,
     });
   });
 
@@ -168,6 +193,43 @@ describe('extractClaimSignatures', () => {
     // it, and the claim still reaches a relevant diff through its entity.
     await expect(
       runNext({ affected: ['next/image', 'Next.js'], superseding: [] }),
-    ).resolves.toEqual({ affected: [], superseding: [] });
+    ).resolves.toEqual({
+      affected: [],
+      superseding: [],
+      // And it is MARKED: the claim named symbols, the bar took all of them,
+      // and without the mark the empty array would read as "this claim is
+      // about the Next.js 16 line" to anything holding a version pin.
+      signatureWithheld: true,
+    });
+  });
+
+  it('should mark a claim whose only symbol the specificity bar refused', async () => {
+    // `a1203b23` in production, the class this flag was written for: "Zod 4
+    // deprecated `.merge()` on object schemas". `merge` is one ordinary word,
+    // §13 refuses it, and the claim then read as a statement about the whole
+    // Zod 4 line — tier B on every zod pin, six reps, all false.
+    await expect(
+      run(
+        { affected: ['merge'], superseding: ['extend'] },
+        'Zod 4 deprecated merge on object schemas; use extend instead.',
+      ),
+    ).resolves.toEqual({
+      affected: [],
+      superseding: ['extend'],
+      signatureWithheld: true,
+    });
+  });
+
+  it('should not mark a claim whose token was invented rather than refused', async () => {
+    // Grounding is a different rule. A token the statement never contained was
+    // never this claim's signature, so nothing was withheld — and a claim with
+    // no code surface must keep reading as one.
+    await expect(
+      run({ affected: ['forms.EmailField'], superseding: [] }),
+    ).resolves.toEqual({
+      affected: [],
+      superseding: [],
+      signatureWithheld: false,
+    });
   });
 });

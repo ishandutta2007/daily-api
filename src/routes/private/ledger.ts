@@ -34,6 +34,8 @@ import {
   ownEntityNames,
   withoutOwnEntityMentions,
 } from '../../common/ownEntityMention';
+import { isTooGenericToEmit } from '../../common/signatureSpecificity';
+import { isSignatureWithheld } from '../../common/signatureWithheld';
 import {
   assertLedgerNamesAvailable,
   evidenceDerivedDate,
@@ -203,15 +205,20 @@ const describedColumns = async ({
 const pickOverride = <T>(override: T | undefined, original: T): T =>
   typeof override === 'undefined' ? original : override;
 
-// The halves of the specificity bar the schema cannot apply, because they need
-// the ledger's own names: v5.17's multi-word technology phrase, which needs
-// EVERY entity's names, and v5.21's own-entity mention, which needs the names
-// of the one entity the claim is filed against.
+// The whole §13 specificity bar, on the write path. Three halves, one home:
+// v5.9's generic token, which needs nothing but the string; v5.17's multi-word
+// technology phrase, which needs EVERY entity's names; and v5.21's own-entity
+// mention, which needs the names of the one entity the claim is filed against.
 //
-// Both are applied here rather than in the schema and both filter rather than
-// reject, for the reason the schema's own note gives: the operator's other
-// overrides in the same call are still valid, and a change whose only symbol
-// is refused legitimately carries none.
+// The first half used to run in the request schema as a transform. It moved
+// here so that all three are asked in one place and the ANSWER can be reported
+// (`withheld`): a route cannot say "the bar refused everything you proposed" if
+// something upstream already edited the proposal.
+//
+// All three filter rather than reject, for the reason the schema's own note
+// gives: the operator's other overrides in the same call are still valid, and a
+// change whose only symbol is refused legitimately carries none. What the
+// refusal now also does is leave a mark — see ../../common/signatureWithheld.ts.
 const sanitizeSignatures = async ({
   con,
   tokens,
@@ -220,32 +227,35 @@ const sanitizeSignatures = async ({
   con: DataSource | EntityManager;
   tokens: string[];
   entityId: string;
-}): Promise<string[]> => {
+}): Promise<{ tokens: string[]; withheld: boolean }> => {
   if (!tokens.length) {
-    return tokens;
+    return { tokens, withheld: false };
   }
 
   const names = await loadProseEntityNames(con);
-  const phrasesRemoved = tokens.filter(
-    (token) => !isEntityPhrase(token, names),
+  const kept = tokens.filter(
+    (token) => !isTooGenericToEmit(token) && !isEntityPhrase(token, names),
   );
   const entity = await con
     .getRepository(LedgerEntity)
     .findOneBy({ id: entityId });
 
-  if (!entity) {
-    return phrasesRemoved;
-  }
-
   // `keepWhenNoSurvivor` is granted here and nowhere else. A reviewer writing
   // `affected: ['next/image']` and nothing else is making the subject-level
   // call this rule cannot make for them, and emptying that array would delete
   // the only thing the claim says.
-  return withoutOwnEntityMentions({
-    tokens: phrasesRemoved,
-    names: ownEntityNames(entity),
-    keepWhenNoSurvivor: true,
-  });
+  const surviving = entity
+    ? withoutOwnEntityMentions({
+        tokens: kept,
+        names: ownEntityNames(entity),
+        keepWhenNoSurvivor: true,
+      })
+    : kept;
+
+  return {
+    tokens: surviving,
+    withheld: isSignatureWithheld({ proposed: tokens, kept: surviving }),
+  };
 };
 
 const claimRowsBuilder = (manager: EntityManager) =>
@@ -264,6 +274,7 @@ const claimRowsBuilder = (manager: EntityManager) =>
       'c."versionParsed" AS "versionParsed"',
       'c.affected AS affected',
       'c.superseding AS superseding',
+      'c."signatureWithheld" AS "signatureWithheld"',
       'c."effectiveDate" AS "effectiveDate"',
       'c."dateSource" AS "dateSource"',
       'c."sunsetDate" AS "sunsetDate"',
@@ -320,6 +331,15 @@ const createClaimFromCandidate = async ({
       ? null
       : evidenceDerivedDate(source);
   const statement = pickOverride(body.statement, candidate.statement);
+  // `affected` decides the claim's GRAIN, so its bar result is read twice: for
+  // the tokens that survive, and for whether anything was proposed at all. A
+  // claim minted with every proposed token refused is symbol-level with no
+  // usable signature, and must never read as a claim about the version line.
+  const affected = await sanitizeSignatures({
+    con: manager,
+    entityId,
+    tokens: pickOverride(body.affected, candidate.affected),
+  });
   const claim = await manager.getRepository(Claim).save({
     entityId,
     // The candidate carries the replacement as the name the post used; without
@@ -337,16 +357,15 @@ const createClaimFromCandidate = async ({
     dateSource: effectiveDate
       ? ClaimDateSource.Extracted
       : (derived?.dateSource ?? null),
-    affected: await sanitizeSignatures({
-      con: manager,
-      entityId,
-      tokens: pickOverride(body.affected, candidate.affected),
-    }),
-    superseding: await sanitizeSignatures({
-      con: manager,
-      entityId,
-      tokens: pickOverride(body.superseding, candidate.superseding),
-    }),
+    affected: affected.tokens,
+    signatureWithheld: affected.withheld,
+    superseding: (
+      await sanitizeSignatures({
+        con: manager,
+        entityId,
+        tokens: pickOverride(body.superseding, candidate.superseding),
+      })
+    ).tokens,
   });
 
   return {
@@ -1153,6 +1172,27 @@ export default async (fastify: FastifyInstance): Promise<void> => {
       return res.status(404).send({ error: 'Claim not found' });
     }
 
+    // Computed before the update literal because the `affected` bar answers
+    // two fields, and because both calls need `await`. An `affected` the
+    // caller did not send leaves the grain flag exactly as it was: a reviewer
+    // editing a date has said nothing about the claim's signature.
+    const affected =
+      typeof body.affected !== 'undefined'
+        ? await sanitizeSignatures({
+            con,
+            entityId: claim.entityId,
+            tokens: body.affected,
+          })
+        : null;
+    const superseding =
+      typeof body.superseding !== 'undefined'
+        ? await sanitizeSignatures({
+            con,
+            entityId: claim.entityId,
+            tokens: body.superseding,
+          })
+        : null;
+
     const update = {
       ...(typeof body.changeType !== 'undefined' && {
         changeType: body.changeType,
@@ -1172,20 +1212,11 @@ export default async (fastify: FastifyInstance): Promise<void> => {
       ...(typeof body.sunsetDate !== 'undefined' && {
         sunsetDate: body.sunsetDate,
       }),
-      ...(typeof body.affected !== 'undefined' && {
-        affected: await sanitizeSignatures({
-          con,
-          entityId: claim.entityId,
-          tokens: body.affected,
-        }),
+      ...(affected && {
+        affected: affected.tokens,
+        signatureWithheld: affected.withheld,
       }),
-      ...(typeof body.superseding !== 'undefined' && {
-        superseding: await sanitizeSignatures({
-          con,
-          entityId: claim.entityId,
-          tokens: body.superseding,
-        }),
-      }),
+      ...(superseding && { superseding: superseding.tokens }),
       ...(typeof body.supersededByEntityId !== 'undefined' && {
         supersededByEntityId: body.supersededByEntityId,
       }),

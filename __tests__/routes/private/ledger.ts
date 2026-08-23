@@ -1604,6 +1604,120 @@ describe('private ledger routes', () => {
     });
   });
 
+  // Playbook §13 v5.22 / rot-bench detector 0.14.0. An empty `affected` means
+  // two opposite things — "no code surface" and "a code surface the bar
+  // refused" — and a consumer holding a version pin treats the first as
+  // evidence. `a1203b23` (Zod 4, `{merge}`) was the second and read as the
+  // first on every zod pin.
+  it('should mark a claim whose every proposed signature token the bar refused', async () => {
+    await seedHierarchy();
+    clearProseEntityNameCache();
+
+    await request(app.server)
+      .post('/p/ledger/claims/update')
+      .set(serviceHeaders)
+      .send({ claimId, affected: ['merge', 'name'] })
+      .expect(200);
+
+    expect(
+      await con.getRepository(Claim).findOneBy({ id: claimId }),
+    ).toMatchObject({ affected: [], signatureWithheld: true });
+  });
+
+  it('should not mark a claim while one proposed token survives the bar', async () => {
+    await seedHierarchy();
+    clearProseEntityNameCache();
+    await con.getRepository(Claim).update(claimId, { signatureWithheld: true });
+
+    await request(app.server)
+      .post('/p/ledger/claims/update')
+      .set(serviceHeaders)
+      .send({ claimId, affected: ['name', 'unstable_cache'] })
+      .expect(200);
+
+    // And the stale mark is CLEARED: the claim now carries a signature, so it
+    // is symbol-level by its own array and the flag has nothing left to say.
+    expect(
+      await con.getRepository(Claim).findOneBy({ id: claimId }),
+    ).toMatchObject({ affected: ['unstable_cache'], signatureWithheld: false });
+  });
+
+  it('should not mark a claim that proposed no signature at all', async () => {
+    // The version-line claim — "React Router v6 has reached End of Life" — and
+    // the one shape a pin is legitimately evidence for. Marking it would
+    // delete tier B from the ledger.
+    await seedHierarchy();
+    clearProseEntityNameCache();
+
+    await request(app.server)
+      .post('/p/ledger/claims/update')
+      .set(serviceHeaders)
+      .send({ claimId, affected: [] })
+      .expect(200);
+
+    expect(
+      await con.getRepository(Claim).findOneBy({ id: claimId }),
+    ).toMatchObject({ affected: [], signatureWithheld: false });
+  });
+
+  it('should leave the mark alone when the update says nothing about signatures', async () => {
+    // A reviewer correcting a date has said nothing about the claim's grain.
+    await seedHierarchy();
+    clearProseEntityNameCache();
+    await con.getRepository(Claim).update(claimId, { signatureWithheld: true });
+
+    await request(app.server)
+      .post('/p/ledger/claims/update')
+      .set(serviceHeaders)
+      .send({ claimId, effectiveDate: '2026-06-01' })
+      .expect(200);
+
+    expect(
+      await con.getRepository(Claim).findOneBy({ id: claimId }),
+    ).toMatchObject({ signatureWithheld: true });
+  });
+
+  it('should not mark the subject-level array the reviewer carve-out keeps', async () => {
+    // `{next/image}` alone survives by `keepWhenNoSurvivor`, so nothing was
+    // withheld — the claim kept exactly what the reviewer wrote.
+    await seedOwnEntityClaim();
+    clearProseEntityNameCache();
+
+    await request(app.server)
+      .post('/p/ledger/claims/update')
+      .set(serviceHeaders)
+      .send({ claimId, affected: ['next/image'] })
+      .expect(200);
+
+    expect(
+      await con.getRepository(Claim).findOneBy({ id: claimId }),
+    ).toMatchObject({ affected: ['next/image'], signatureWithheld: false });
+  });
+
+  it('should mark a claim minted from a candidate whose every token the bar refused', async () => {
+    await con.getRepository(LedgerEntity).save({
+      id: parentEntityId,
+      canonicalName: 'Next.js',
+      kind: LedgerEntityKind.Package,
+      aliases: ['nextjs'],
+      codeOnlyAliases: ['next'],
+    });
+    clearProseEntityNameCache();
+    await seedCandidate();
+
+    await request(app.server)
+      .post('/p/ledger/candidates/resolve')
+      .set(serviceHeaders)
+      .send({ candidateId, action: 'merge', affected: ['merge', 'name'] })
+      .expect(200);
+
+    expect(
+      await con
+        .getRepository(Claim)
+        .findOneByOrFail({ statement: 'Next.js deprecates the pages router.' }),
+    ).toMatchObject({ affected: [], signatureWithheld: true });
+  });
+
   it('should link a claim to the claim that supersedes it and unlink it again', async () => {
     await seedHierarchy();
     const reversal = await con.getRepository(Claim).save({

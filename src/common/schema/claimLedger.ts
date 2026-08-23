@@ -7,7 +7,6 @@ import {
 } from '../../entity/claim/LedgerEntity';
 import { ClaimEvidenceSourceClass } from '../../entity/claim/ClaimEvidence';
 import { enumValues } from './utils';
-import { isTooGenericToEmit } from '../signatureSpecificity';
 import { normalizeEcosystems } from '../ledgerEcosystem';
 
 const entityName = z.string().trim().min(1).max(200);
@@ -18,19 +17,15 @@ const note = z.string().trim().min(1).max(500);
 const description = z.string().trim().min(1).max(1000);
 // Symbols, import paths, model IDs and endpoints, kept as the literal token a
 // plan would carry so matching stays an equality check.
-// The specificity bar applies wherever signatures are written, not only where
-// they are extracted: /claims/update and /candidates/resolve let a reviewer set
-// these arrays by hand, and a hand-written "name" accuses every codebase on
-// earth exactly as an extracted one does. Filtered rather than rejected — the
-// operator's other overrides in the same call are still valid, and a change
-// whose only symbol is generic legitimately carries none.
 //
-// Only the half that needs no database lives here. The entity-name half needs
-// the ledger's own names, so the routes apply it after parsing.
-const signatures = z
-  .array(z.string().trim().min(1).max(200))
-  .max(50)
-  .transform((tokens) => tokens.filter((token) => !isTooGenericToEmit(token)));
+// SHAPE ONLY. The §13 specificity bar used to run here as a transform, and
+// that is now wrong for one reason: the routes have to know whether the bar
+// refused EVERYTHING the caller proposed (`signatureWithheld`), and a schema
+// that silently drops tokens hands them a proposal that has already been
+// edited. The whole bar therefore has one home on the write path —
+// `sanitizeSignatures` in routes/private/ledger.ts — which is also where its
+// other two halves already lived because they need the ledger's own names.
+const signatures = z.array(z.string().trim().min(1).max(200)).max(50);
 
 // The registries an entity installs from, as the closed `LedgerEcosystem`
 // vocabulary. An unknown string is REJECTED rather than dropped: a typo'd

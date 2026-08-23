@@ -105,6 +105,15 @@ export class Claim {
   @Column({ type: 'timestamp', nullable: true, default: null })
   signaturesBackfilledAt: Date | null;
 
+  // Set when the §13 emission bar refused EVERY token proposed for `affected`.
+  // The claim is symbol-level — it has a code surface — and simply could not
+  // express it distinctively enough to match on. Without this an empty
+  // `affected` reads as "this claim is about the version line", which is the
+  // one shape a consumer treats a version pin as evidence for
+  // (../../common/signatureWithheld.ts).
+  @Column({ type: 'boolean', default: false })
+  signatureWithheld: boolean;
+
   @Column({ type: 'date', nullable: true, default: null })
   effectiveDate: string | null;
 

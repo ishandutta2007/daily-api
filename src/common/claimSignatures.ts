@@ -6,6 +6,7 @@ import {
   normalizeSignatureToken as normalize,
 } from './ledgerEntityNames';
 import { isOwnEntityMention, ownEntityNames } from './ownEntityMention';
+import { isSignatureWithheld } from './signatureWithheld';
 
 // Where a signature changes what a reader does. `release` and `new_capability`
 // are two thirds of the ledger and make nothing stale — measured at 0/45 and
@@ -77,7 +78,14 @@ const SIGNATURE_TOOL = {
   },
 };
 
-export type ClaimSignatures = { affected: string[]; superseding: string[] };
+export type ClaimSignatures = {
+  affected: string[];
+  superseding: string[];
+  // The §13 bar refused every GROUNDED token the model proposed for
+  // `affected` (../common/signatureWithheld.ts). The claim has a code surface
+  // it could not express, and an empty array alone would say the opposite.
+  signatureWithheld: boolean;
+};
 
 // A CVE identifier names an advisory, not anything a reader has in their code.
 // It cannot match a plan and only widens the surface a detector scans.
@@ -164,7 +172,12 @@ export const extractClaimSignatures = async ({
         !isTooGenericToEmit(token),
     );
 
-  const affected = usable(grounded(input.affected, claim.statement));
+  // The PROPOSAL is the grounded set, not the model's raw output: a token the
+  // statement never contained was invented rather than proposed, and grounding
+  // is a different rule with a different name. Everything the bar then takes
+  // from a non-empty proposal is a withheld signature.
+  const proposedAffected = grounded(input.affected, claim.statement);
+  const affected = usable(proposedAffected);
   const superseding = usable(grounded(input.superseding, claim.statement));
   // A token on both sides says the reader should both stop and keep using it.
   // Whichever side was meant, the pair carries no information and one half of
@@ -175,10 +188,20 @@ export const extractClaimSignatures = async ({
       .filter((token) => superseding.map(normalize).includes(token)),
   );
 
+  const keptAffected = affected.filter(
+    (token) => !contradictory.has(normalize(token)),
+  );
+
   return {
-    affected: affected.filter((token) => !contradictory.has(normalize(token))),
+    affected: keptAffected,
     superseding: superseding.filter(
       (token) => !contradictory.has(normalize(token)),
     ),
+    // Measured at the END, so every reason a token can be refused counts the
+    // same way: the claim named symbols and none of them are usable.
+    signatureWithheld: isSignatureWithheld({
+      proposed: proposedAffected,
+      kept: keptAffected,
+    }),
   };
 };
