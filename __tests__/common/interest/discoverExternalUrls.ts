@@ -35,13 +35,19 @@ describe('discoverExternalUrls', () => {
     ]);
   });
 
-  it('drops non-http entries and de-duplicates urls', async () => {
+  it('drops non-http and unparseable entries and de-duplicates urls', async () => {
     mockContent(
       JSON.stringify([
         { url: 'https://a.com', title: 'A', rationale: 'r', score: 0.8 },
         { url: 'https://a.com', title: 'dup', rationale: 'r', score: 0.8 },
         { url: 'ftp://b.com', title: 'B', rationale: 'r', score: 0.8 },
         { url: 42, title: 'C', rationale: 'r', score: 0.8 },
+        {
+          url: 'https://ex ample.com/blog/post',
+          title: 'D',
+          rationale: 'r',
+          score: 0.8,
+        },
       ]),
     );
     const result = await discoverExternalUrls({

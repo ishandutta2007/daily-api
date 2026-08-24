@@ -4,6 +4,7 @@ import {
   getUrlTrailingSlashVariants,
   standardizeURL,
 } from '../../src/common';
+import { domainOnly } from '../../src/common/links';
 
 describe('standardizeURL', () => {
   it('should keep url without query', () => {
@@ -119,5 +120,17 @@ describe('getUrlDedupVariants', () => {
       'https://www.github.com/versity/versitygw',
       'https://www.github.com/versity/versitygw/',
     ]);
+  });
+});
+
+describe('domainOnly', () => {
+  it('should strip www and return the hostname', () => {
+    expect(domainOnly('https://www.github.com/versity/versitygw')).toBe(
+      'github.com',
+    );
+  });
+
+  it('should return an empty string for an unparseable url', () => {
+    expect(domainOnly('https://ex ample.com/blog/post')).toBe('');
   });
 });

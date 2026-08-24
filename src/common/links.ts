@@ -172,9 +172,13 @@ export function isValidHttpUrl(link: string): boolean {
 export const domainOnly = (url: string): string => {
   if (!url) return '';
 
-  const { hostname } = new URL(url);
+  try {
+    const { hostname } = new URL(url);
 
-  return hostname.replace(/^www\d?\./, '');
+    return hostname.replace(/^www\d?\./, '');
+  } catch {
+    return '';
+  }
 };
 
 type GetInviteLinkProps = {

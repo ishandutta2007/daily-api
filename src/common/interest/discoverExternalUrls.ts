@@ -2,6 +2,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { agentAnthropicClient } from '../../integrations/anthropic/client';
 import type { AnthropicResponse } from '../../integrations/anthropic/types';
 import type { UserInterest } from '../../entity/UserInterest';
+import { isValidHttpUrl } from '../links';
 
 export type DiscoveredUrl = {
   url: string;
@@ -21,7 +22,7 @@ const extractJsonArray = (text: string): string => {
 };
 
 const isHttpUrl = (value: unknown): value is string =>
-  typeof value === 'string' && /^https?:\/\//i.test(value);
+  typeof value === 'string' && isValidHttpUrl(value);
 
 const isDailyDevUrl = (value: string): boolean => {
   try {
