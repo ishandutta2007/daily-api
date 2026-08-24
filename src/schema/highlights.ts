@@ -14,6 +14,7 @@ import type { OffsetPage } from './common';
 import { HighlightsCanonical } from '../entity/HighlightsCanonical';
 import {
   HighlightSignificance,
+  majorHeadlineSignificances,
   toHighlightSignificance,
 } from '../common/channelHighlight/significance';
 import type { GQLSource } from './sources';
@@ -124,11 +125,6 @@ export const typeDefs = /* GraphQL */ `
     newHighlight: PostHighlight! @auth
   }
 `;
-
-export const majorHeadlineSignificances = [
-  HighlightSignificance.Breaking,
-  HighlightSignificance.Major,
-];
 
 const defaultHighlightsLimit = 10;
 const maxHighlightsLimit = 50;

@@ -124,6 +124,13 @@ export const fetchIncrementalPosts = async ({
     .getRepository(Post)
     .createQueryBuilder('post')
     .where('post.createdAt >= :horizonStart', { horizonStart })
+    // Keep the createdAt bound so the index still drives the scan, then drop
+    // anything published before the horizon — a re-crawled or aggregator-submitted
+    // article is fresh by createdAt but is not news.
+    .andWhere(
+      '(post."publishedAt" IS NULL OR post."publishedAt" >= :horizonStart)',
+      { horizonStart },
+    )
     .andWhere('post.visible = true')
     .andWhere('post.deleted = false')
     .andWhere('post.banned = false')

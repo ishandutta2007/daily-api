@@ -80,7 +80,7 @@ const toCandidate = (
     postId: candidate.postId,
     title: candidate.title,
     summary: candidate.summary || undefined,
-    createdAt: toTimestamp(candidate.createdAt),
+    createdAt: toTimestamp(candidate.storyAt),
     upvotes: candidate.upvotes,
     comments: candidate.comments,
     views: candidate.views,

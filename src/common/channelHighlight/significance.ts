@@ -6,6 +6,11 @@ export enum HighlightSignificance {
   Routine = 4,
 }
 
+export const majorHeadlineSignificances = [
+  HighlightSignificance.Breaking,
+  HighlightSignificance.Major,
+];
+
 export const toHighlightSignificance = (
   label: string | null | undefined,
 ): HighlightSignificance => {

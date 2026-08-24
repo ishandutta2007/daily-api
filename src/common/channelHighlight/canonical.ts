@@ -2,10 +2,16 @@ import { type DataSource, type EntityManager } from 'typeorm';
 import { HighlightsCanonical } from '../../entity/HighlightsCanonical';
 import { UNKNOWN_SOURCE } from '../../entity/Source';
 import { getChannelDigestSourceIds } from '../channelDigest/definitions';
+import { ONE_HOUR_IN_SECONDS } from '../constants';
 import {
   DEFAULT_CANDIDATE_HORIZON_HOURS,
   DEFAULT_MAX_ITEMS,
+  FRESH_ADMISSION_HOURS,
 } from './constants';
+import {
+  majorHeadlineSignificances,
+  toHighlightSignificance,
+} from './significance';
 import { compareSnapshots } from './decisions';
 import { evaluateHighlights } from './evaluate';
 import {
@@ -241,15 +247,32 @@ const evaluateNewHighlights = async ({
     currentHighlights: canonicalHistory,
     newCandidates,
   });
+  const storyAtByPostId = new Map(
+    newCandidates.map((candidate) => [candidate.postId, candidate.storyAt]),
+  );
+  const freshStart = new Date(
+    now.getTime() - FRESH_ADMISSION_HOURS * ONE_HOUR_IN_SECONDS * 1000,
+  );
 
-  return result.items.map<HighlightItem>((item) => ({
-    postId: item.postId,
-    headline: item.headline,
-    summary: null,
-    highlightedAt: now,
-    significanceLabel: item.significanceLabel,
-    reason: item.reason,
-  }));
+  return result.items
+    .filter((item) => {
+      const storyAt = storyAtByPostId.get(item.postId);
+      if (!storyAt || storyAt >= freshStart) {
+        return true;
+      }
+
+      return majorHeadlineSignificances.includes(
+        toHighlightSignificance(item.significanceLabel),
+      );
+    })
+    .map<HighlightItem>((item) => ({
+      postId: item.postId,
+      headline: item.headline,
+      summary: null,
+      highlightedAt: now,
+      significanceLabel: item.significanceLabel,
+      reason: item.reason,
+    }));
 };
 
 export const generateCanonicalHighlights = async ({

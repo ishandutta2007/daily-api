@@ -26,6 +26,7 @@ export type HighlightPost = Pick<
   url: string | null;
   canonicalUrl: string | null;
   sharedPostId?: string | null;
+  publishedAt?: Date | null;
 };
 
 export type HighlightQualitySummary = {
@@ -42,6 +43,7 @@ export type HighlightCandidate = {
   title: string;
   summary: string;
   createdAt: Date;
+  storyAt: Date;
   lastActivityAt: Date;
   upvotes: number;
   comments: number;

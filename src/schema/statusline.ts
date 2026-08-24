@@ -9,11 +9,8 @@ import { Post, PostType } from '../entity/posts/Post';
 import { feedGenerators } from '../integrations/feed/generators';
 import { getFeedResponsePostIds } from '../integrations/feed/types';
 import { getRedisObject, setRedisObjectWithExpiry } from '../redis';
-import {
-  applyHighlightsFilters,
-  applyVisiblePostFilter,
-  majorHeadlineSignificances,
-} from './highlights';
+import { majorHeadlineSignificances } from '../common/channelHighlight/significance';
+import { applyHighlightsFilters, applyVisiblePostFilter } from './highlights';
 
 export const typeDefs = /* GraphQL */ `
   extend type Query {

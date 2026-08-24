@@ -10,6 +10,14 @@ import type {
   HighlightQualitySummary,
 } from './types';
 
+// createdAt is when we ingested the post, not when the story happened. A
+// backfilled source or an aggregator submission of an old article lands with
+// createdAt = now, so recency has to come from publishedAt whenever we have it.
+export const toStoryAt = (post: HighlightPost): Date =>
+  post.publishedAt && post.publishedAt < post.createdAt
+    ? post.publishedAt
+    : post.createdAt;
+
 const toLastActivityAt = (post: HighlightPost): Date => {
   const timestamps = [
     post.createdAt?.getTime() || 0,
@@ -115,12 +123,17 @@ const buildCandidate = ({
     const activityAt = toLastActivityAt(post);
     return activityAt > current ? activityAt : current;
   }, toLastActivityAt(canonicalPost));
+  const storyAt = memberPosts.reduce((current, post) => {
+    const postStoryAt = toStoryAt(post);
+    return postStoryAt > current ? postStoryAt : current;
+  }, toStoryAt(canonicalPost));
 
   return {
     postId: canonicalPost.id,
     title: canonicalPost.title || '',
     summary: getPostSummary({ post: canonicalPost, postsById }) || '',
     createdAt: canonicalPost.createdAt,
+    storyAt,
     lastActivityAt,
     upvotes: canonicalPost.upvotes,
     comments: canonicalPost.comments,
@@ -181,7 +194,7 @@ export const buildCandidates = ({
           postsById,
         }),
       )
-      .filter((candidate) => candidate.lastActivityAt >= horizonStart)
+      .filter((candidate) => candidate.storyAt >= horizonStart)
       // Bragi grades significance from title + summary; a post highlighted before
       // its summary lands gets mis-graded and frozen. Skip until summarized — it
       // re-enters as a candidate once the summary bumps metadataChangedAt.

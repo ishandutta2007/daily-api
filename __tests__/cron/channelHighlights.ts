@@ -31,6 +31,7 @@ const saveArticle = async ({
   id,
   title,
   createdAt,
+  publishedAt,
   statsUpdatedAt = createdAt,
   metadataChangedAt = createdAt,
   channels = ['vibes'],
@@ -41,6 +42,7 @@ const saveArticle = async ({
   id: string;
   title: string;
   createdAt: Date;
+  publishedAt?: Date;
   statsUpdatedAt?: Date;
   metadataChangedAt?: Date;
   channels?: string[];
@@ -53,6 +55,7 @@ const saveArticle = async ({
     shortId: id,
     title,
     summary,
+    publishedAt,
     url: `https://example.com/${id}`,
     canonicalUrl: `https://example.com/${id}`,
     score: 0,
@@ -516,6 +519,100 @@ describe('channel highlight generation cron', () => {
       expect.objectContaining({
         postId: 'pshare-summ',
         summary: 'The referred post carries the summary.',
+      }),
+    ]);
+  });
+
+  it('should score candidates on the publication date, not the ingestion date', async () => {
+    const now = new Date('2026-03-03T18:00:00.000Z');
+    await saveArticle({
+      id: 'republished',
+      title: 'Re-crawled story',
+      createdAt: new Date('2026-03-03T17:45:00.000Z'),
+      publishedAt: new Date('2026-03-01T09:00:00.000Z'),
+    });
+
+    const evaluatorSpy = jest
+      .spyOn(evaluator, 'evaluateHighlights')
+      .mockResolvedValue({ items: [] });
+
+    await runChannelHighlights({ con, now });
+
+    expect(evaluatorSpy.mock.calls[0][0].newCandidates).toEqual([
+      expect.objectContaining({
+        postId: 'republished',
+        storyAt: new Date('2026-03-01T09:00:00.000Z'),
+      }),
+    ]);
+  });
+
+  it('should skip candidates published before the horizon even when just ingested', async () => {
+    const now = new Date('2026-03-03T19:00:00.000Z');
+    await saveArticle({
+      id: 'backfilled',
+      title: 'Backfilled story',
+      createdAt: new Date('2026-03-03T18:45:00.000Z'),
+      publishedAt: new Date('2026-01-05T09:00:00.000Z'),
+    });
+    await saveArticle({
+      id: 'current',
+      title: 'Current story',
+      createdAt: new Date('2026-03-03T18:50:00.000Z'),
+      publishedAt: new Date('2026-03-03T18:30:00.000Z'),
+    });
+
+    const evaluatorSpy = jest
+      .spyOn(evaluator, 'evaluateHighlights')
+      .mockResolvedValue({ items: [] });
+
+    await runChannelHighlights({ con, now });
+
+    expect(evaluatorSpy.mock.calls[0][0].newCandidates).toEqual([
+      expect.objectContaining({ postId: 'current' }),
+    ]);
+  });
+
+  it('should only admit a story older than the fresh window when it is major', async () => {
+    const now = new Date('2026-03-03T20:00:00.000Z');
+    await saveArticle({
+      id: 'stale-notable',
+      title: 'Stale notable story',
+      createdAt: new Date('2026-03-03T19:45:00.000Z'),
+      publishedAt: new Date('2026-02-28T09:00:00.000Z'),
+    });
+    await saveArticle({
+      id: 'stale-major',
+      title: 'Stale major story',
+      createdAt: new Date('2026-03-03T19:50:00.000Z'),
+      publishedAt: new Date('2026-02-28T10:00:00.000Z'),
+    });
+
+    jest.spyOn(evaluator, 'evaluateHighlights').mockResolvedValue({
+      items: [
+        {
+          postId: 'stale-notable',
+          headline: 'Stale notable headline',
+          significanceLabel: 'notable',
+          reason: 'test',
+        },
+        {
+          postId: 'stale-major',
+          headline: 'Stale major headline',
+          significanceLabel: 'major',
+          reason: 'test',
+        },
+      ],
+    });
+
+    await runChannelHighlights({ con, now });
+
+    const canonicalHighlights = await con
+      .getRepository(HighlightsCanonical)
+      .find();
+    expect(canonicalHighlights).toEqual([
+      expect.objectContaining({
+        postId: 'stale-major',
+        significance: HighlightSignificance.Major,
       }),
     ]);
   });
