@@ -2,6 +2,8 @@ import { DataSource } from 'typeorm';
 import { crons } from '../../src/cron/index';
 import { ledgerHygieneCron as cron } from '../../src/cron/ledgerHygiene';
 import { expectSuccessfulCron, saveFixtures } from '../helpers';
+import { repairCrawlDatedClaims } from '../../src/common/ledgerHygiene';
+import { evidenceDerivedDate } from '../../src/common/claimLedger';
 import createOrGetConnection from '../../src/db';
 import { Source } from '../../src/entity/Source';
 import { ArticlePost } from '../../src/entity/posts/ArticlePost';
@@ -112,6 +114,67 @@ describe('ledgerHygiene cron', () => {
         String(message).includes('signature pass'),
       ),
     ).toBe(false);
+  });
+
+  it('should leave a claim undated when the source age cannot be read', async () => {
+    // The dating rule cannot tell an archive import from a live crawl without
+    // the source's age, and being unable to tell must not fall back to using
+    // the crawl date — that is how the wrong date got minted in the first place.
+    await con
+      .getRepository(ArticlePost)
+      .update(postsFixture[0].id as string, { publishedAt: null });
+
+    expect(
+      evidenceDerivedDate({
+        publishedAt: null,
+        createdAt: new Date(),
+        sourceCreatedAt: null,
+      }),
+    ).toBeNull();
+  });
+
+  it('should re-date a crawl-dated claim once the post real date is known', async () => {
+    // The crawl date was a stand-in for a date we did not have. On an archive
+    // import it is wrong by the article's whole age.
+    await con.getRepository(Claim).update(datableClaimId, {
+      effectiveDate: '2026-08-23',
+      dateSource: ClaimDateSource.EvidenceCrawled,
+    });
+
+    expect(await repairCrawlDatedClaims(con)).toEqual(1);
+    expect(
+      await con.getRepository(Claim).findOneBy({ id: datableClaimId }),
+    ).toMatchObject({
+      effectiveDate: '2026-02-11',
+      dateSource: ClaimDateSource.EvidencePublished,
+    });
+  });
+
+  it('should leave a crawl-dated claim alone when the post reads as published after we crawled it', async () => {
+    // We cannot have crawled a post before it existed, so this row is bad in a
+    // way the repair cannot name — and a repair that overwrites a date may only
+    // act on the cases it can.
+    await con.getRepository(Claim).update(datableClaimId, {
+      effectiveDate: '2025-01-01',
+      dateSource: ClaimDateSource.EvidenceCrawled,
+    });
+
+    expect(await repairCrawlDatedClaims(con)).toEqual(0);
+    expect(
+      await con.getRepository(Claim).findOneBy({ id: datableClaimId }),
+    ).toMatchObject({
+      effectiveDate: '2025-01-01',
+      dateSource: ClaimDateSource.EvidenceCrawled,
+    });
+  });
+
+  it('should never overwrite the date a reviewer read off the change itself', async () => {
+    await con.getRepository(Claim).update(datableClaimId, {
+      effectiveDate: '2026-08-23',
+      dateSource: ClaimDateSource.Extracted,
+    });
+
+    expect(await repairCrawlDatedClaims(con)).toEqual(0);
   });
 
   it('should not re-date a claim that already carries an extracted date', async () => {

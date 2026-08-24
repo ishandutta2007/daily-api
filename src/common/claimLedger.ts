@@ -53,7 +53,7 @@ export const evidenceDerivedDate = (
   // straight through the staleness bar that exists to catch it and enters the
   // ledger reading as current. An undated claim is the honest outcome here
   // (playbook §10), and it leaves the row visible to the review lane instead.
-  if (source?.createdAt && !isArchiveImport(source)) {
+  if (source?.createdAt && isLiveCrawl(source)) {
     return {
       effectiveDate: asDate(source.createdAt),
       dateSource: ClaimDateSource.EvidenceCrawled,
@@ -63,7 +63,12 @@ export const evidenceDerivedDate = (
   return null;
 };
 
-const isArchiveImport = ({
+// Phrased as "prove this was a live crawl" rather than "prove this was an
+// archive import", because the two differ when `sourceCreatedAt` is missing and
+// that difference decides whether a future caller reintroduces the bug by
+// forgetting a field. Unable-to-tell yields no date, which costs a claim its
+// upper bound; the other way round it silently mints the wrong date again.
+const isLiveCrawl = ({
   createdAt,
   sourceCreatedAt,
 }: {
@@ -72,7 +77,7 @@ const isArchiveImport = ({
 }): boolean =>
   !!createdAt &&
   !!sourceCreatedAt &&
-  createdAt.getTime() - sourceCreatedAt.getTime() < ARCHIVE_IMPORT_WINDOW_MS;
+  createdAt.getTime() - sourceCreatedAt.getTime() >= ARCHIVE_IMPORT_WINDOW_MS;
 
 // Params that name a syndication channel rather than a document.
 const TRACKING_PARAM_PREFIXES = ['utm_', 'ref_', 'mc_', 'mkt_', 'pk_'];

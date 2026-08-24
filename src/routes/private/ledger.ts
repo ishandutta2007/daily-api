@@ -165,7 +165,12 @@ const findEvidenceSource = ({
       // distinction `evidenceDerivedDate` needs before it will date a claim from
       // when we crawled the post.
       .addSelect('s."createdAt"', 'sourceCreatedAt')
-      .innerJoin('source', 's', 's.id = p."sourceId"')
+      // LEFT, not INNER: `post.sourceId` defaults to a sentinel rather than
+      // being nullable, and an inner join drops the whole row — taking the url
+      // and slug the evidence write needs with it — wherever that sentinel has
+      // no `source`. A missing source age already means "cannot tell", which
+      // yields no date.
+      .leftJoin('source', 's', 's.id = p."sourceId"')
       .where('p.id = :postId', { postId: candidate.postId })
       .getRawOne<EvidenceSource>()
   );

@@ -170,3 +170,83 @@ export const clearPreReleaseDates = async (con: Con): Promise<number> => {
 
   return affected ?? 0;
 };
+
+// A claim dated from the day we CRAWLED the post, sitting on a post whose real
+// publication date is now known. The crawl date was only ever a stand-in for a
+// date we did not have — and a bad one on any archive import, because
+// registering a source imports its whole archive at once, so a 2013 article and
+// a 2026 article are crawled the same morning. Measured on prod 2026-08-23:
+// 91.4% of these claims carry exactly the crawl date, and every one on a
+// pre-2025 article is wrong by that article's own age.
+//
+// Deliberately narrow in three ways, because this OVERWRITES a date rather than
+// filling an empty one:
+//
+//   - Only `evidence_crawled`. `extracted` is the change's own date, stated by
+//     the post and possibly set by a reviewer who read it; `evidence_published`
+//     is already the better provenance. Neither is this repair's business.
+//   - Only where the post now has a `publishedAt`. Nothing is invented here —
+//     the recovered date comes from the post row, so whatever fixes the posts
+//     (a re-clean, a feed date now carried through) decides what this can reach.
+//     Run it after the posts are repaired, not before.
+//   - Only where the recovered date is EARLIER than the date on the claim. A
+//     publication date later than our crawl of it is impossible, so those rows
+//     are bad in some way this repair cannot name, and it leaves them alone.
+//
+// The two exclusions the dating planner applies are applied here for the same
+// reasons: `rejected` rows are undatable by construction, and a pre-release row
+// stays NULL under R24.
+export const planCrawlDateRepairs = async (
+  con: Con,
+): Promise<Map<string, string[]>> => {
+  const misdated = await con
+    .getRepository(Claim)
+    .createQueryBuilder('c')
+    .select('c.id', 'id')
+    .addSelect('MIN(p."publishedAt")', 'publishedAt')
+    .innerJoin('claim_evidence', 'e', 'e."claimId" = c.id')
+    .innerJoin('post', 'p', 'p.id = e."postId"')
+    .where('c."dateSource" = :crawled', {
+      crawled: ClaimDateSource.EvidenceCrawled,
+    })
+    .andWhere('c.status IN (:...statuses)', { statuses: CONSUMABLE_STATUSES })
+    .andWhere(
+      `(c."versionScope" IS NULL OR lower(c."versionScope") NOT LIKE :marker)`,
+      { marker: `%${PRE_RELEASE_MARKER}%` },
+    )
+    .andWhere('p."publishedAt" IS NOT NULL')
+    .groupBy('c.id')
+    .addSelect('c."effectiveDate"', 'effectiveDate')
+    .addGroupBy('c."effectiveDate"')
+    .having('MIN(p."publishedAt")::date < c."effectiveDate"')
+    .getRawMany<{ id: string; publishedAt: Date }>();
+
+  // Recovered dates cluster on publication, so one UPDATE per distinct date
+  // beats one per claim by orders of magnitude — the same shape the dating
+  // planner uses.
+  const groups = new Map<string, string[]>();
+
+  misdated.forEach(({ id, publishedAt }) => {
+    const date = publishedAt.toISOString().slice(0, 10);
+
+    groups.set(date, [...(groups.get(date) ?? []), id]);
+  });
+
+  return groups;
+};
+
+export const repairCrawlDatedClaims = async (con: Con): Promise<number> => {
+  const groups = await planCrawlDateRepairs(con);
+  let repaired = 0;
+
+  for (const [effectiveDate, ids] of groups) {
+    await con.getRepository(Claim).update(ids, {
+      effectiveDate,
+      dateSource: ClaimDateSource.EvidencePublished,
+    });
+
+    repaired += ids.length;
+  }
+
+  return repaired;
+};
