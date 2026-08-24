@@ -1402,6 +1402,26 @@ describe('storeNotificationBundle', () => {
     );
     expect(actual.notification.referenceId).toEqual('i1');
     expect(actual.notification.uniqueKey).toEqual('i1:1700000000000');
+    expect(actual.notification.targetUrl).toEqual(
+      'http://localhost:5002/agent/i1',
+    );
+  });
+
+  it('should deep-link interest_content_batch to the run when runId is present', () => {
+    const actual = generateNotificationV2(
+      NotificationType.InterestContentBatch,
+      {
+        userIds: [userId],
+        interest: { id: 'i1', query: 'cool rust projects' },
+        count: 3,
+        runId: 'run-1',
+        dedupKey: 'i1:1700000000000',
+      },
+    );
+
+    expect(actual.notification.targetUrl).toEqual(
+      'http://localhost:5002/agent/i1?run=run-1',
+    );
   });
 
   it('should use the agent run summary as the interest_content_batch title', () => {

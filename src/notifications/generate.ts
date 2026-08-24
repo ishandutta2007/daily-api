@@ -679,10 +679,18 @@ export const generateNotificationMap: Record<
     builder: NotificationBuilder,
     ctx: NotificationInterestBatchContext,
   ) => {
+    const targetUrl = new URL(
+      `/agent/${ctx.interest.id}`,
+      process.env.COMMENTS_PREFIX,
+    );
+    if (ctx.runId) {
+      targetUrl.searchParams.set('run', ctx.runId);
+    }
+
     return builder
       .icon(NotificationIcon.Bell)
       .referenceInterest(ctx.interest)
-      .targetUrl(`${process.env.COMMENTS_PREFIX}/agent/${ctx.interest.id}`)
+      .targetUrl(targetUrl.toString())
       .uniqueKey(ctx.dedupKey ?? ctx.interest.id);
   },
   user_follow: (builder, ctx: NotificationUserContext) => {

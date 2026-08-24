@@ -114,6 +114,7 @@ describe('userInterestRun worker', () => {
       userId: usersFixture[0].id,
       count: 2,
       runAt: expect.any(Number),
+      runId: expect.any(String),
     });
 
     const surfaced = await con
@@ -182,6 +183,7 @@ describe('userInterestRun worker', () => {
       userId: usersFixture[0].id,
       count: 0,
       runAt: expect.any(Number),
+      runId: expect.any(String),
     });
   });
 
@@ -446,6 +448,7 @@ describe('userInterestRun worker', () => {
       userId: usersFixture[0].id,
       count: 2,
       runAt: startedAt.getTime(),
+      runId: 'run-1',
     });
 
     const run = await con

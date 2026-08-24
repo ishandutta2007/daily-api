@@ -173,6 +173,7 @@ export const userInterestRunWorker: TypedWorker<'api.v1.interest-run-requested'>
                 userId: interest.userId,
                 count: run.findingsAdded,
                 runAt: (run.startedAt ?? run.createdAt).getTime(),
+                runId: claimedRunId,
               },
             );
             await runRepo.update(
@@ -309,6 +310,7 @@ export const userInterestRunWorker: TypedWorker<'api.v1.interest-run-requested'>
             userId: interest.userId,
             count: deliverableCount,
             runAt,
+            runId: claimedRunId,
           });
           await runRepo.update(
             { id: claimedRunId, interestId },

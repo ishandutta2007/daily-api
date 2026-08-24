@@ -6,7 +6,7 @@ export const interestContentAvailableNotification: TypedNotificationWorker<'api.
   {
     subscription: 'api.interest-content-available-notification',
     handler: async (data, con) => {
-      const { interestId, userId, count, runAt } = data;
+      const { interestId, userId, count, runAt, runId } = data;
 
       const interest = await con.getRepository(UserInterest).findOne({
         select: ['id', 'query', 'lastRunSummary'],
@@ -27,6 +27,7 @@ export const interestContentAvailableNotification: TypedNotificationWorker<'api.
               lastRunSummary: interest.lastRunSummary,
             },
             count,
+            runId,
             userIds: [userId],
             dedupKey: `${interestId}:${runAt}`,
           },

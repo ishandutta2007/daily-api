@@ -242,6 +242,7 @@ export type PubSubSchema = {
     userId: string;
     count: number;
     runAt: number;
+    runId: string;
   };
   'api.v1.user-follow': {
     payload: ChangeObject<ContentPreferenceUser>;
