@@ -433,6 +433,13 @@ export const resolvers: IResolvers<unknown, BaseContext> = {
             .getRepository(InterestRun)
             .createQueryBuilder('r')
             .where('r."interestId" = :id', { id })
+            .andWhere(
+              `NOT (r.trigger = :scheduledTrigger AND r.status = :completedStatus AND r."findingsAdded" = 0 AND r."summaryPostId" IS NULL)`,
+              {
+                scheduledTrigger: InterestRunTrigger.Scheduled,
+                completedStatus: InterestRunStatus.Completed,
+              },
+            )
             .orderBy('r."createdAt"', 'DESC')
             .addOrderBy('r.id', 'DESC')
             .limit(take);

@@ -972,6 +972,65 @@ describe('query interestHistory', () => {
     });
   });
 
+  it('should hide quiet completed scheduled runs but keep failed, contentful, and user-triggered ones', async () => {
+    loggedUser = '1';
+    await con.getRepository(InterestRun).save([
+      {
+        id: 'run-quiet',
+        interestId: 'uir-1',
+        status: InterestRunStatus.Completed,
+        trigger: InterestRunTrigger.Scheduled,
+        blocks: [{ type: 'text', html: '<p>Nothing new.</p>' }],
+        createdAt: new Date('2026-01-03T00:00:00Z'),
+      },
+      {
+        id: 'run-failed',
+        interestId: 'uir-1',
+        status: InterestRunStatus.Failed,
+        trigger: InterestRunTrigger.Scheduled,
+        createdAt: new Date('2026-01-04T00:00:00Z'),
+      },
+      {
+        id: 'run-found',
+        interestId: 'uir-1',
+        status: InterestRunStatus.Completed,
+        trigger: InterestRunTrigger.Scheduled,
+        findingsAdded: 2,
+        createdAt: new Date('2026-01-05T00:00:00Z'),
+      },
+      {
+        id: 'run-summary',
+        interestId: 'uir-1',
+        status: InterestRunStatus.Completed,
+        trigger: InterestRunTrigger.Scheduled,
+        summaryPostId: 'ipost-1',
+        createdAt: new Date('2026-01-06T00:00:00Z'),
+      },
+      {
+        id: 'run-command-quiet',
+        interestId: 'uir-1',
+        status: InterestRunStatus.Completed,
+        trigger: InterestRunTrigger.Command,
+        createdAt: new Date('2026-01-07T00:00:00Z'),
+      },
+    ]);
+
+    const res = await client.query(INTEREST_HISTORY, {
+      variables: { id: 'uir-1' },
+    });
+    expect(res.errors).toBeFalsy();
+    expect(res.data.interestHistory.map(({ id }) => id)).toEqual([
+      'uir-1-spawn',
+      'run-1',
+      'fb-1',
+      'run-2',
+      'run-failed',
+      'run-found',
+      'run-summary',
+      'run-command-quiet',
+    ]);
+  });
+
   it('should page older turns through the before cursor', async () => {
     loggedUser = '1';
     const firstPage = await client.query(
