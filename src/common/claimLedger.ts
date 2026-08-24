@@ -32,7 +32,13 @@ export const evidenceDerivedDate = (
   // it names — the same `::date` the backfill applies.
   const asDate = (value: Date): string => value.toISOString().slice(0, 10);
 
-  if (source?.publishedAt) {
+  // A `Date` is truthy even when it holds Go's zero `time.Time`, and producers
+  // do ship that as a stated publication date — yggdrasil#732 filed 504 ledger
+  // documents and 160 posts published in year 1. Reading it as a date is the
+  // worse of the two failures available here: it is not an upper bound on
+  // anything, and M1 would deny the claim for staleness rather than surface the
+  // misdating, so the row would leave the queue looking reviewed.
+  if (source?.publishedAt && source.publishedAt.getTime() >= 0) {
     return {
       effectiveDate: asDate(source.publishedAt),
       dateSource: ClaimDateSource.EvidencePublished,

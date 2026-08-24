@@ -182,6 +182,24 @@ describe('extractLedgerDocumentClaims worker', () => {
     });
   });
 
+  it('should store no date for a producer that sent a zero timestamp', async () => {
+    await expectSuccessfulTypedBackground<'yggdrasil.v1.ledger-document-published'>(
+      worker,
+      // Go's zero `time.Time` in unix seconds — what a producer sends when it
+      // mistakes an unstated date for a stated one.
+      documentPublished({ publishedAt: BigInt(-62135596800) }),
+    );
+
+    const document = await con
+      .getRepository(LedgerDocument)
+      .findOneByOrFail({ id: 'ygg-doc-1' });
+    expect(document.publishedAt).toBeNull();
+
+    expect(mockExtractClaims).toHaveBeenCalledWith(
+      expect.objectContaining({ publishedDate: '' }),
+    );
+  });
+
   it('should stamp a document that yielded no claims so redelivery costs nothing', async () => {
     await expectSuccessfulTypedBackground<'yggdrasil.v1.ledger-document-published'>(
       worker,

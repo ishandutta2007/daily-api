@@ -61,9 +61,16 @@ const worker: TypedWorker<'yggdrasil.v1.ledger-document-published'> = {
       sourceName: data.sourceName,
       sourceClass:
         sourceClassMap[data.sourceClass] ?? ClaimEvidenceSourceClass.Community,
-      // Unix seconds; absent means the source stated no date.
+      // Unix seconds; absent means the source stated no date, and so does a
+      // value before the epoch. Go's zero `time.Time` is -62135596800 and
+      // parses as a real date, so every `!= nil` check on the producer side
+      // waves it through as stated — yggdrasil#732 did exactly that and filed
+      // 504 documents published in year 1. Nothing this lane sources predates
+      // the web, so the whole pre-epoch range reads as unstated rather than
+      // that one sentinel; epoch zero itself stays meaningful, as the contract
+      // asks.
       publishedAt:
-        typeof data.publishedAt === 'undefined'
+        typeof data.publishedAt === 'undefined' || data.publishedAt < BigInt(0)
           ? null
           : new Date(Number(data.publishedAt) * 1000),
       contentLocation,

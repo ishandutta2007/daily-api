@@ -133,6 +133,18 @@ describe('ledgerHygiene cron', () => {
     ).toBeNull();
   });
 
+  it('should treat a zero publication date as no date at all', () => {
+    // Go's zero `time.Time`. It is truthy as a `Date`, so only an explicit
+    // check keeps year 1 out of `effectiveDate`.
+    expect(
+      evidenceDerivedDate({
+        publishedAt: new Date(-62135596800 * 1000),
+        createdAt: null,
+        sourceCreatedAt: null,
+      }),
+    ).toBeNull();
+  });
+
   it('should re-date a crawl-dated claim once the post real date is known', async () => {
     // The crawl date was a stand-in for a date we did not have. On an archive
     // import it is wrong by the article's whole age.
